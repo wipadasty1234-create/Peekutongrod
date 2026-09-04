@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>ตัวตัง ก๋วยเตี๋ยวไก่บุฟเฟต์ — หลังร้าน</title>
+<meta name="theme-color" content="#8C2F2F">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.6/dexie.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">ตัวตัง ก๋วยเตี๋ยวไก่บุฟเฟต์</div>
+  <div class="subdate" id="headerDate">—</div>
+</header>
+
+<main>
+
+  <!-- ============ หน้าแรก ============ -->
+  <div class="page" id="page-home">
+    <section class="card accent-maroon">
+      <h2>สรุปวันนี้</h2>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="label">รายรับตามระบบ</div><div class="value" id="homeCalc">฿0</div></div>
+        <div class="stat-box"><div class="label">รายรับจริง</div><div class="value" id="homeActual">฿0</div></div>
+        <div class="stat-box"><div class="label">ค่าใช้จ่ายวันนี้</div><div class="value" id="homeExpense">฿0</div></div>
+        <div class="stat-box"><div class="label">กำไร/ขาดทุนวันนี้</div><div class="value" id="homeProfit">฿0</div></div>
+      </div>
+      <div class="helper-text" id="homeSalesStatus">ยังไม่ได้บันทึกยอดขายวันนี้</div>
+    </section>
+
+    <section class="card">
+      <h2>ทางลัด</h2>
+      <div class="row" style="margin-bottom:10px;">
+        <button class="btn full" onclick="Router.go('sales')">บันทึกยอดขายวันนี้</button>
+      </div>
+      <div class="row">
+        <button class="btn secondary full" onclick="Router.go('stock','count')">นับสต๊อกวันนี้</button>
+        <button class="btn secondary full" onclick="Router.go('accounting','expense')">บันทึกรายจ่าย</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>รายการที่ต้องนับสต๊อกวันนี้</h2>
+      <div id="homeCountDue"></div>
+    </section>
+
+    <section class="card">
+      <h2>สำรองข้อมูล</h2>
+      <p class="helper-text">ข้อมูลทั้งหมดเก็บอยู่ในเครื่องนี้เท่านั้น กรุณา Export เก็บไว้เป็นประจำ โดยเฉพาะก่อนเปลี่ยนเครื่องหรือปิดร้านยาวๆ</p>
+      <div class="row">
+        <button class="btn secondary full" id="btnExport">Export ข้อมูล</button>
+        <button class="btn ghost full" id="btnImportTrigger">Import ข้อมูล</button>
+      </div>
+      <input type="file" id="fileImport" accept="application/json" style="display:none;">
+    </section>
+  </div>
+
+  <!-- ============ ขายวันนี้ ============ -->
+  <div class="page" id="page-sales">
+    <section class="card accent-maroon">
+      <h2>บันทึกยอดขาย</h2>
+      <label>วันที่</label>
+      <input type="date" id="salesDate">
+      <div id="salesLines" style="margin-top:6px;"></div>
+      <div class="divider"></div>
+      <div class="row" style="align-items:center;">
+        <div><strong>รายรับตามระบบ</strong></div>
+        <div style="text-align:right; font-size:20px; font-weight:600;" id="salesCalcTotal">฿0</div>
+      </div>
+      <label>รายรับจริง (เงินสด/โอนที่นับได้จริง)</label>
+      <input type="number" id="salesActual" inputmode="decimal" placeholder="0">
+      <label>หมายเหตุ (ถ้ามี)</label>
+      <textarea id="salesNote" placeholder="เช่น ฝนตก ลูกค้าน้อย / มีโปรโมชั่น"></textarea>
+      <div style="margin-top:14px;">
+        <button class="btn full" id="btnSaveSales">บันทึกยอดขายวันนี้</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ คลัง ============ -->
+  <div class="page" id="page-stock">
+    <div class="subtabs" id="stockSubtabs">
+      <button data-sub="menu" class="active">คลังเมนู</button>
+      <button data-sub="receive">รับเข้า</button>
+      <button data-sub="count">นับคงเหลือ</button>
+      <button data-sub="materials">คลังวัตถุดิบ</button>
+    </div>
+
+    <div class="subpage" id="stock-menu">
+      <section class="card">
+        <h2>เพิ่มเมนู</h2>
+        <div class="row">
+          <div><label>ชื่อเมนู</label><input type="text" id="menuName"></div>
+          <div><label>ราคา</label><input type="number" id="menuPrice"></div>
+        </div>
+        <label>หมวด</label>
+        <select id="menuCategory">
+          <option value="buffet">บุฟเฟต์/อาหาร</option>
+          <option value="drink">เครื่องดื่ม</option>
+        </select>
+        <div style="margin-top:12px;"><button class="btn full" id="btnAddMenu">เพิ่มเมนู</button></div>
+      </section>
+      <section class="card"><h2>รายการเมนูทั้งหมด</h2><div id="menuList"></div></section>
+    </div>
+
+    <div class="subpage" id="stock-receive" style="display:none;">
+      <section class="card accent-green">
+        <h2>บันทึกรับเข้าวัตถุดิบ</h2>
+        <label>วันที่</label>
+        <input type="date" id="recvDate">
+        <label>วัตถุดิบ</label>
+        <select id="recvMaterial"></select>
+        <div class="row">
+          <div><label>จำนวนที่รับ</label><input type="number" id="recvQty" inputmode="decimal"></div>
+          <div><label>ราคาต่อหน่วย (บาท)</label><input type="number" id="recvUnitCost" inputmode="decimal"></div>
+        </div>
+        <label>ผู้ขาย/ร้านค้า (ถ้ามี)</label>
+        <input type="text" id="recvSupplier">
+        <div style="margin-top:12px;"><button class="btn full" id="btnSaveReceive">บันทึกรับเข้า</button></div>
+      </section>
+      <section class="card"><h2>ประวัติรับเข้าล่าสุด</h2><div id="recvHistory"></div></section>
+    </div>
+
+    <div class="subpage" id="stock-count" style="display:none;">
+      <section class="card accent-maroon">
+        <h2>นับสต๊อกคงเหลือ</h2>
+        <label>วันที่</label>
+        <input type="date" id="countDate">
+        <p class="helper-text">แสดงเฉพาะรายการที่ถึงรอบนับของวันนี้ — กรอกแค่ตัวเลขที่นับได้จริง ระบบจะคำนวณส่วนที่ใช้ไปให้เอง</p>
+        <div id="countLines"></div>
+        <div style="margin-top:12px;"><button class="btn full" id="btnSaveCount">บันทึกการนับ</button></div>
+      </section>
+    </div>
+
+    <div class="subpage" id="stock-materials" style="display:none;">
+      <section class="card">
+        <h2>เพิ่มวัตถุดิบ</h2>
+        <div class="row">
+          <div><label>ชื่อวัตถุดิบ</label><input type="text" id="matName"></div>
+          <div><label>หน่วย</label><input type="text" id="matUnit" placeholder="กก. / ขวด / ถุง"></div>
+        </div>
+        <label>รอบการนับสต๊อก</label>
+        <select id="matFreq">
+          <option value="daily">รายวัน (ของสด)</option>
+          <option value="weekly">รายสัปดาห์ (ของแห้ง/เครื่องปรุง)</option>
+        </select>
+        <div style="margin-top:12px;"><button class="btn full" id="btnAddMaterial">เพิ่มวัตถุดิบ</button></div>
+      </section>
+      <section class="card"><h2>รายการวัตถุดิบ</h2><div id="materialList"></div></section>
+    </div>
+  </div>
+
+  <!-- ============ รายงาน ============ -->
+  <div class="page" id="page-reports">
+    <section class="card">
+      <h2>เลือกช่วงเวลา</h2>
+      <div class="subtabs" id="reportRangeTabs">
+        <button data-range="7" class="active">7 วัน</button>
+        <button data-range="30">30 วัน</button>
+        <button data-range="90">3 เดือน</button>
+        <button data-range="custom">กำหนดเอง</button>
+      </div>
+      <div class="row" id="reportCustomRange" style="display:none;">
+        <div><label>จาก</label><input type="date" id="reportFrom"></div>
+        <div><label>ถึง</label><input type="date" id="reportTo"></div>
+      </div>
+    </section>
+
+    <section class="card accent-green">
+      <h2>สรุปรวมช่วงที่เลือก</h2>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="label">รายรับจริงรวม</div><div class="value" id="repRevenue">฿0</div></div>
+        <div class="stat-box"><div class="label">ต้นทุนวัตถุดิบรวม</div><div class="value" id="repCogs">฿0</div></div>
+        <div class="stat-box"><div class="label">ค่าใช้จ่ายดำเนินงาน</div><div class="value" id="repOpex">฿0</div></div>
+        <div class="stat-box"><div class="label">กำไร/ขาดทุนสุทธิ</div><div class="value" id="repProfit">฿0</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>กราฟรายรับจริงรายวัน</h2>
+      <div class="chart-wrap"><canvas id="chartDaily" height="180"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>เฉลี่ยตามวันในสัปดาห์ (แนะนำวันหยุดร้าน)</h2>
+      <div class="chart-wrap"><canvas id="chartWeekday" height="180"></canvas></div>
+      <p class="helper-text" id="weekdaySuggestion"></p>
+    </section>
+  </div>
+
+  <!-- ============ บัญชี ============ -->
+  <div class="page" id="page-accounting">
+    <div class="subtabs" id="acctSubtabs">
+      <button data-sub="expense" class="active">บันทึกรายจ่าย</button>
+      <button data-sub="pl">กำไรขาดทุน</button>
+    </div>
+
+    <div class="subpage" id="acct-expense">
+      <section class="card accent-maroon">
+        <h2>บันทึกรายจ่าย</h2>
+        <label>วันที่</label>
+        <input type="date" id="expDate">
+        <label>หมวดหมู่</label>
+        <select id="expCategory">
+          <option value="operating">ค่าใช้จ่ายดำเนินงาน (ค่าเช่า/แรงงาน/สาธารณูปโภค/อื่นๆ)</option>
+          <option value="rawMaterial">ซื้อวัตถุดิบ (จ่ายเงินสด นอกเหนือจากบันทึกรับเข้า)</option>
+        </select>
+        <label>รายละเอียด</label>
+        <input type="text" id="expDesc" placeholder="เช่น ค่าไฟเดือนนี้">
+        <label>จำนวนเงิน</label>
+        <input type="number" id="expAmount" inputmode="decimal">
+        <label>รูปสลิป/ใบเสร็จ (ถ้ามี)</label>
+        <input type="file" id="expReceipt" accept="image/*" capture="environment">
+        <div style="margin-top:12px;"><button class="btn full" id="btnSaveExpense">บันทึกรายจ่าย</button></div>
+      </section>
+      <section class="card"><h2>รายจ่ายล่าสุด</h2><div id="expenseList"></div></section>
+    </div>
+
+    <div class="subpage" id="acct-pl" style="display:none;">
+      <section class="card">
+        <h2>เลือกช่วงเวลา</h2>
+        <div class="row">
+          <div><label>จาก</label><input type="date" id="plFrom"></div>
+          <div><label>ถึง</label><input type="date" id="plTo"></div>
+        </div>
+        <button class="btn full" id="btnRunPL" style="margin-top:10px;">คำนวณ</button>
+      </section>
+      <section class="card accent-green" id="plResult" style="display:none;">
+        <h2>งบกำไรขาดทุน</h2>
+        <div class="list-item"><span>รายรับจริง</span><strong id="plRevenue">฿0</strong></div>
+        <div class="list-item"><span>ต้นทุนวัตถุดิบ (COGS)</span><strong id="plCogs">฿0</strong></div>
+        <div class="list-item"><span>กำไรขั้นต้น</span><strong id="plGross">฿0</strong></div>
+        <div class="list-item"><span>ค่าใช้จ่ายดำเนินงาน</span><strong id="plOpex">฿0</strong></div>
+        <div class="divider"></div>
+        <div class="list-item"><span><strong>กำไร/ขาดทุนสุทธิ</strong></span><strong id="plNet" style="font-size:19px;">฿0</strong></div>
+      </section>
+    </div>
+  </div>
+
+</main>
+
+<nav class="bottomnav">
+  <button data-page="home" class="active"><span class="dot"></span><span class="navlabel">หน้าแรก</span></button>
+  <button data-page="sales"><span class="dot"></span><span class="navlabel">ขายวันนี้</span></button>
+  <button data-page="stock"><span class="dot"></span><span class="navlabel">คลัง</span></button>
+  <button data-page="reports"><span class="dot"></span><span class="navlabel">รายงาน</span></button>
+  <button data-page="accounting"><span class="dot"></span><span class="navlabel">บัญชี</span></button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/db.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

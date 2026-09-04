@@ -1,261 +1,1884 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>ตัวตึง ก๋วยเตี๋ยวไก่บุฟเฟต์ — หลังร้าน</title>
-<meta name="theme-color" content="#B5502C">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icons/icon.svg">
-<link rel="stylesheet" href="css/style.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.6/dexie.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#BC5A34" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<title>ตัวตึงก๋วยเตี๋ยวไก่มะระ บุฟเฟต์</title>
+<style>
+  :root {
+    --cream: #F3E9D8;
+    --cream-deep: #EADFC8;
+    --terracotta: #BC5A34;
+    --terracotta-deep: #8F3F22;
+    --ink: #2E2117;
+    --ink-soft: #6B5C4C;
+    --herb: #5C6B41;
+    --herb-bg: #E7EADB;
+    --line: #D8C4A5;
+    --white: #FFFDF9;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--cream);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", "Leelawadee UI", "PingFang TC", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    padding-bottom: 84px; /* เผื่อ bottom nav */
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, input, select, textarea { font-family: inherit; font-size: inherit; }
+
+  h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+
+  /* ---------------- App bar / ตั๋วสรุปยอด ---------------- */
+  .ticket {
+    position: relative;
+    background: var(--terracotta);
+    color: var(--white);
+    padding: 20px 20px 28px;
+    margin-bottom: 24px;
+  }
+  .ticket::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -1px; height: 16px;
+    background: radial-gradient(circle at 8px 8px, transparent 8px, var(--cream) 8px) 0 -8px / 16px 16px repeat-x;
+  }
+  .ticket-eyebrow { font-size: 13px; opacity: 0.85; margin-bottom: 2px; }
+  .ticket-date { font-size: 20px; font-weight: 700; margin-bottom: 14px; }
+  .ticket-stat-label { font-size: 13px; opacity: 0.85; }
+  .ticket-stat-value {
+    font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .ticket-stat-value.pending { font-size: 17px; font-weight: 600; opacity: 0.95; }
+  .ticket-cta {
+    display: inline-block; margin-top: 12px;
+    background: var(--white); color: var(--terracotta-deep);
+    border: none; border-radius: 999px; padding: 10px 18px;
+    font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+
+  main { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+
+  /* ---------------- ป้ายสถานะทรงตราปั๊ม ---------------- */
+  .stamp {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1.5px dashed currentColor; border-radius: 999px;
+    padding: 5px 12px; font-size: 13px; font-weight: 700;
+  }
+  .stamp.warn { color: var(--terracotta-deep); background: #F6E3D3; }
+  .stamp.ok { color: var(--herb); background: var(--herb-bg); }
+
+  .alert-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+
+  /* ---------------- การ์ดข้อมูล (ไม่มนเท่ากันทุกใบ ตั้งใจให้ต่างจาก ticket) ---------------- */
+  .card {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 16px; margin-bottom: 12px; }
+  .card h3 { font-size: 14px; color: var(--ink-soft); margin-bottom: 8px; font-weight: 700; }
+
+  .row-list { display: flex; flex-direction: column; }
+  .row-item {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 10px 0; border-bottom: 1px dashed var(--line);
+  }
+  .row-item:last-child { border-bottom: none; }
+  .row-item .label { color: var(--ink-soft); font-size: 14px; }
+  .row-item .value { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .row-item .value.profit-pos { color: var(--herb); }
+  .row-item .value.profit-neg { color: var(--terracotta-deep); }
+
+  .empty-state { text-align: center; padding: 28px 16px; color: var(--ink-soft); }
+  .empty-state p { margin: 4px 0; }
+
+  /* ---------------- ฟอร์ม ---------------- */
+  label { display: block; font-size: 13px; font-weight: 700; color: var(--ink-soft); margin-bottom: 6px; }
+  .field { margin-bottom: 14px; }
+  input[type="text"], input[type="number"], input[type="date"], select, textarea {
+    width: 100%; padding: 11px 12px;
+    border: 1.5px solid var(--line); border-radius: 10px;
+    background: var(--white); color: var(--ink);
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--terracotta); outline-offset: 1px; border-color: var(--terracotta);
+  }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: none; border-radius: 10px; padding: 13px 18px;
+    font-weight: 700; cursor: pointer; width: 100%;
+  }
+  .btn-primary { background: var(--terracotta); color: var(--white); }
+  .btn-primary:active { background: var(--terracotta-deep); }
+  .btn-ghost { background: transparent; color: var(--terracotta-deep); border: 1.5px solid var(--terracotta); }
+  .btn-danger-text { background: none; border: none; color: var(--terracotta-deep); font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px; }
+  .btn-small { width: auto; padding: 8px 14px; font-size: 14px; }
+
+  .addon-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px dashed var(--line); gap: 12px; }
+  .addon-row:last-child { border-bottom: none; }
+  .addon-row .name { font-size: 14px; flex: 1; }
+  .addon-row input { width: 70px; text-align: center; padding: 8px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
+    background: var(--ink); color: var(--white); padding: 10px 18px;
+    border-radius: 999px; font-size: 14px; font-weight: 600;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+    max-width: 90vw; text-align: center; z-index: 50;
+  }
+  .toast.show { opacity: 1; }
+
+  /* ---------------- Bottom nav ---------------- */
+  nav.bottom-nav {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--white); border-top: 1px solid var(--line);
+    display: flex; padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    z-index: 40;
+  }
+  nav.bottom-nav button {
+    flex: 1; background: none; border: none; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 8px 2px; color: var(--ink-soft); font-size: 11px; font-weight: 700;
+    border-radius: 10px;
+  }
+  nav.bottom-nav button.active { color: var(--terracotta-deep); background: var(--cream-deep); }
+  nav.bottom-nav svg { width: 22px; height: 22px; }
+
+  .section-title { font-size: 20px; font-weight: 800; margin: 4px 0 16px; }
+
+  a { color: var(--terracotta-deep); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">ตัวตึง ก๋วยเตี๋ยวไก่บุฟเฟต์</div>
-  <div class="subdate" id="headerDate">—</div>
-</header>
-
-<main>
-
-  <!-- ============ หน้าแรก ============ -->
-  <div class="page" id="page-home">
-    <section class="card accent-maroon">
-      <h2>สรุปวันนี้</h2>
-      <div class="stat-grid">
-        <div class="stat-box"><div class="label">รายรับตามระบบ</div><div class="value" id="homeCalc">฿0</div></div>
-        <div class="stat-box"><div class="label">รายรับจริง</div><div class="value" id="homeActual">฿0</div></div>
-        <div class="stat-box"><div class="label">ค่าใช้จ่ายวันนี้</div><div class="value" id="homeExpense">฿0</div></div>
-        <div class="stat-box"><div class="label">กำไร/ขาดทุนวันนี้</div><div class="value" id="homeProfit">฿0</div></div>
-      </div>
-      <div class="helper-text" id="homeSalesStatus">ยังไม่ได้บันทึกยอดขายวันนี้</div>
-    </section>
-
-    <section class="card">
-      <h2>ทางลัด</h2>
-      <div class="row" style="margin-bottom:10px;">
-        <button class="btn full" onclick="Router.go('sales')">บันทึกยอดขายวันนี้</button>
-      </div>
-      <div class="row">
-        <button class="btn secondary full" onclick="Router.go('stock','count')">นับสต๊อกวันนี้</button>
-        <button class="btn secondary full" onclick="Router.go('accounting','expense')">บันทึกรายจ่าย</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>รายการที่ต้องนับสต๊อกวันนี้</h2>
-      <div id="homeCountDue"></div>
-    </section>
-
-    <section class="card">
-      <h2>สำรองข้อมูล</h2>
-      <p class="helper-text">ข้อมูลทั้งหมดเก็บอยู่ในเครื่องนี้เท่านั้น กรุณา Export เก็บไว้เป็นประจำ โดยเฉพาะก่อนเปลี่ยนเครื่องหรือปิดร้านยาวๆ</p>
-      <div class="row">
-        <button class="btn secondary full" id="btnExport">Export ข้อมูล</button>
-        <button class="btn ghost full" id="btnImportTrigger">Import ข้อมูล</button>
-      </div>
-      <input type="file" id="fileImport" accept="application/json" style="display:none;">
-    </section>
-  </div>
-
-  <!-- ============ ขายวันนี้ ============ -->
-  <div class="page" id="page-sales">
-    <section class="card accent-maroon">
-      <h2>บันทึกยอดขาย</h2>
-      <label>วันที่</label>
-      <input type="date" id="salesDate">
-      <div id="salesLines" style="margin-top:6px;"></div>
-      <div class="divider"></div>
-      <div class="row" style="align-items:center;">
-        <div><strong>รายรับตามระบบ</strong></div>
-        <div style="text-align:right; font-size:20px; font-weight:600;" id="salesCalcTotal">฿0</div>
-      </div>
-      <label>รายรับจริง (เงินสด/โอนที่นับได้จริง)</label>
-      <input type="number" id="salesActual" inputmode="decimal" placeholder="0">
-      <label>หมายเหตุ (ถ้ามี)</label>
-      <textarea id="salesNote" placeholder="เช่น ฝนตก ลูกค้าน้อย / มีโปรโมชั่น"></textarea>
-      <div style="margin-top:14px;">
-        <button class="btn full" id="btnSaveSales">บันทึกยอดขายวันนี้</button>
-      </div>
-    </section>
-  </div>
-
-  <!-- ============ คลัง ============ -->
-  <div class="page" id="page-stock">
-    <div class="subtabs" id="stockSubtabs">
-      <button data-sub="menu" class="active">คลังเมนู</button>
-      <button data-sub="receive">รับเข้า</button>
-      <button data-sub="count">นับคงเหลือ</button>
-      <button data-sub="materials">คลังวัตถุดิบ</button>
-    </div>
-
-    <div class="subpage" id="stock-menu">
-      <section class="card">
-        <h2>เพิ่มเมนู</h2>
-        <div class="row">
-          <div><label>ชื่อเมนู</label><input type="text" id="menuName"></div>
-          <div><label>ราคา</label><input type="number" id="menuPrice"></div>
-        </div>
-        <label>หมวด</label>
-        <select id="menuCategory">
-          <option value="buffet">บุฟเฟต์/อาหาร</option>
-          <option value="drink">เครื่องดื่ม</option>
-        </select>
-        <div style="margin-top:12px;"><button class="btn full" id="btnAddMenu">เพิ่มเมนู</button></div>
-      </section>
-      <section class="card"><h2>รายการเมนูทั้งหมด</h2><div id="menuList"></div></section>
-    </div>
-
-    <div class="subpage" id="stock-receive" style="display:none;">
-      <section class="card accent-green">
-        <h2>บันทึกรับเข้าวัตถุดิบ</h2>
-        <label>วันที่</label>
-        <input type="date" id="recvDate">
-        <label>วัตถุดิบ</label>
-        <select id="recvMaterial"></select>
-        <div class="row">
-          <div><label>จำนวนที่รับ</label><input type="number" id="recvQty" inputmode="decimal"></div>
-          <div><label>ราคาต่อหน่วย (บาท)</label><input type="number" id="recvUnitCost" inputmode="decimal"></div>
-        </div>
-        <label>ผู้ขาย/ร้านค้า (ถ้ามี)</label>
-        <input type="text" id="recvSupplier">
-        <div style="margin-top:12px;"><button class="btn full" id="btnSaveReceive">บันทึกรับเข้า</button></div>
-      </section>
-      <section class="card"><h2>ประวัติรับเข้าล่าสุด</h2><div id="recvHistory"></div></section>
-    </div>
-
-    <div class="subpage" id="stock-count" style="display:none;">
-      <section class="card accent-maroon">
-        <h2>นับสต๊อกคงเหลือ</h2>
-        <label>วันที่</label>
-        <input type="date" id="countDate">
-        <p class="helper-text">แสดงเฉพาะรายการที่ถึงรอบนับของวันนี้ — กรอกแค่ตัวเลขที่นับได้จริง ระบบจะคำนวณส่วนที่ใช้ไปให้เอง</p>
-        <div id="countLines"></div>
-        <div style="margin-top:12px;"><button class="btn full" id="btnSaveCount">บันทึกการนับ</button></div>
-      </section>
-    </div>
-
-    <div class="subpage" id="stock-materials" style="display:none;">
-      <section class="card">
-        <h2>เพิ่มวัตถุดิบ</h2>
-        <div class="row">
-          <div><label>ชื่อวัตถุดิบ</label><input type="text" id="matName"></div>
-          <div><label>หน่วย</label><input type="text" id="matUnit" placeholder="กก. / ขวด / ถุง"></div>
-        </div>
-        <label>รอบการนับสต๊อก</label>
-        <select id="matFreq">
-          <option value="daily">รายวัน (ของสด)</option>
-          <option value="weekly">รายสัปดาห์ (ของแห้ง/เครื่องปรุง)</option>
-        </select>
-        <div style="margin-top:12px;"><button class="btn full" id="btnAddMaterial">เพิ่มวัตถุดิบ</button></div>
-      </section>
-      <section class="card"><h2>รายการวัตถุดิบ</h2><div id="materialList"></div></section>
-    </div>
-  </div>
-
-  <!-- ============ รายงาน ============ -->
-  <div class="page" id="page-reports">
-    <section class="card">
-      <h2>เลือกช่วงเวลา</h2>
-      <div class="subtabs" id="reportRangeTabs">
-        <button data-range="7" class="active">7 วัน</button>
-        <button data-range="30">30 วัน</button>
-        <button data-range="90">3 เดือน</button>
-        <button data-range="custom">กำหนดเอง</button>
-      </div>
-      <div class="row" id="reportCustomRange" style="display:none;">
-        <div><label>จาก</label><input type="date" id="reportFrom"></div>
-        <div><label>ถึง</label><input type="date" id="reportTo"></div>
-      </div>
-    </section>
-
-    <section class="card accent-green">
-      <h2>สรุปรวมช่วงที่เลือก</h2>
-      <div class="stat-grid">
-        <div class="stat-box"><div class="label">รายรับจริงรวม</div><div class="value" id="repRevenue">฿0</div></div>
-        <div class="stat-box"><div class="label">ต้นทุนวัตถุดิบรวม</div><div class="value" id="repCogs">฿0</div></div>
-        <div class="stat-box"><div class="label">ค่าใช้จ่ายดำเนินงาน</div><div class="value" id="repOpex">฿0</div></div>
-        <div class="stat-box"><div class="label">กำไร/ขาดทุนสุทธิ</div><div class="value" id="repProfit">฿0</div></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>กราฟรายรับจริงรายวัน</h2>
-      <div class="chart-wrap"><canvas id="chartDaily" height="180"></canvas></div>
-    </section>
-
-    <section class="card">
-      <h2>เฉลี่ยตามวันในสัปดาห์ (แนะนำวันหยุดร้าน)</h2>
-      <div class="chart-wrap"><canvas id="chartWeekday" height="180"></canvas></div>
-      <p class="helper-text" id="weekdaySuggestion"></p>
-    </section>
-  </div>
-
-  <!-- ============ บัญชี ============ -->
-  <div class="page" id="page-accounting">
-    <div class="subtabs" id="acctSubtabs">
-      <button data-sub="expense" class="active">บันทึกรายจ่าย</button>
-      <button data-sub="pl">กำไรขาดทุน</button>
-    </div>
-
-    <div class="subpage" id="acct-expense">
-      <section class="card accent-maroon">
-        <h2>บันทึกรายจ่าย</h2>
-        <label>วันที่</label>
-        <input type="date" id="expDate">
-        <label>หมวดหมู่</label>
-        <select id="expCategory">
-          <option value="operating">ค่าใช้จ่ายดำเนินงาน (ค่าเช่า/แรงงาน/สาธารณูปโภค/อื่นๆ)</option>
-          <option value="rawMaterial">ซื้อวัตถุดิบ (จ่ายเงินสด นอกเหนือจากบันทึกรับเข้า)</option>
-        </select>
-        <label>รายละเอียด</label>
-        <input type="text" id="expDesc" placeholder="เช่น ค่าไฟเดือนนี้">
-        <label>จำนวนเงิน</label>
-        <input type="number" id="expAmount" inputmode="decimal">
-        <label>รูปสลิป/ใบเสร็จ (ถ้ามี)</label>
-        <input type="file" id="expReceipt" accept="image/*" capture="environment">
-        <div style="margin-top:12px;"><button class="btn full" id="btnSaveExpense">บันทึกรายจ่าย</button></div>
-      </section>
-      <section class="card"><h2>รายจ่ายล่าสุด</h2><div id="expenseList"></div></section>
-    </div>
-
-    <div class="subpage" id="acct-pl" style="display:none;">
-      <section class="card">
-        <h2>เลือกช่วงเวลา</h2>
-        <div class="row">
-          <div><label>จาก</label><input type="date" id="plFrom"></div>
-          <div><label>ถึง</label><input type="date" id="plTo"></div>
-        </div>
-        <button class="btn full" id="btnRunPL" style="margin-top:10px;">คำนวณ</button>
-      </section>
-      <section class="card accent-green" id="plResult" style="display:none;">
-        <h2>งบกำไรขาดทุน</h2>
-        <div class="list-item"><span>รายรับจริง</span><strong id="plRevenue">฿0</strong></div>
-        <div class="list-item"><span>ต้นทุนวัตถุดิบ (COGS)</span><strong id="plCogs">฿0</strong></div>
-        <div class="list-item"><span>กำไรขั้นต้น</span><strong id="plGross">฿0</strong></div>
-        <div class="list-item"><span>ค่าใช้จ่ายดำเนินงาน</span><strong id="plOpex">฿0</strong></div>
-        <div class="divider"></div>
-        <div class="list-item"><span><strong>กำไร/ขาดทุนสุทธิ</strong></span><strong id="plNet" style="font-size:19px;">฿0</strong></div>
-      </section>
-    </div>
-  </div>
-
-</main>
-
-<nav class="bottomnav">
-  <button data-page="home" class="active"><span class="dot"></span><span class="navlabel">หน้าแรก</span></button>
-  <button data-page="sales"><span class="dot"></span><span class="navlabel">ขายวันนี้</span></button>
-  <button data-page="stock"><span class="dot"></span><span class="navlabel">คลัง</span></button>
-  <button data-page="reports"><span class="dot"></span><span class="navlabel">รายงาน</span></button>
-  <button data-page="accounting"><span class="dot"></span><span class="navlabel">บัญชี</span></button>
-</nav>
+<div id="app-header"></div>
+<main id="app-content"></main>
 
 <div class="toast" id="toast"></div>
 
-<script src="js/db.js"></script>
-<script src="js/app.js"></script>
+<nav class="bottom-nav" id="bottom-nav">
+  <button data-view="dashboard">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
+    หน้าหลัก
+  </button>
+  <button data-view="entry">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+    บันทึกวันนี้
+  </button>
+  <button data-view="menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+    ตั้งค่าเมนู
+  </button>
+  <button data-view="more">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+    เพิ่มเติม
+  </button>
+</nav>
+
+<script type="module">
+import Dexie from 'https://cdn.jsdelivr.net/npm/dexie@4/+esm';
+
+// ============================================================
+// db.js (embedded)
+// ============================================================
+// db.js
+// นิยามโครงสร้างฐานข้อมูล IndexedDB (ผ่าน Dexie.js) สำหรับระบบหลังบ้าน
+// "ตัวตึงก๋วยเตี๋ยวไก่มะระ บุฟเฟต์"
+//
+// อ้างอิงจาก:
+//   - database-design-tuadueng.md (v1 draft) หมวด 2-6
+//   - SCHEMA_ADDENDUM_daily-entry.md (แทนที่ orders/order_items/order_buffet_details/order_edit_logs
+//     ด้วย daily_entries/daily_addon_sales/daily_entry_edit_logs)
+//
+// ทุกตารางหลักใช้ UUID (string) เป็น Primary Key ตามที่ตกลงไว้ในเอกสารข้อ 7
+// (รองรับ export/import ย้ายเครื่องโดยไม่ชน id กัน)
+
+
+const db = new Dexie('tuadueng_db');
+
+// หมายเหตุ Dexie schema syntax:
+//   - 'id' (ไม่มี ++) = primary key ที่แอปเป็นคนกำหนดเอง (เราใช้ UUID)
+//   - '&field' = unique index
+//   - '[a+b]' = compound index (ใช้เช็ค unique constraint คู่ฟิลด์)
+db.version(1).stores({
+  // ---------- 1) Master data ----------
+  system_settings: 'id, &key',
+  buffet_packages: 'id, name, is_active',
+  menu_categories: 'id, name, is_active',
+  menu_items: 'id, category_id, item_type, is_active',
+  shifts: 'id, name',
+
+  // ---------- 2) Daily Entry (แทน orders เดิม ตาม SCHEMA_ADDENDUM) ----------
+  daily_entries: 'id, &entry_date, recorded_by',
+  daily_addon_sales: 'id, entry_date, menu_item_id, [entry_date+menu_item_id]',
+  daily_entry_edit_logs: 'id, entry_date, changed_at',
+
+  // ---------- 3) วัตถุดิบ/สต็อก ----------
+  ingredients: 'id, name, category, is_active, count_frequency',
+  ingredient_purchases: 'id, ingredient_id, purchase_date',
+  ingredient_stock_counts: 'id, ingredient_id, count_date, [ingredient_id+count_date]',
+  menu_item_ingredients: 'id, menu_item_id, ingredient_id, [menu_item_id+ingredient_id]',
+  cost_references: 'id, target_type, target_id, [target_type+target_id]',
+
+  // ---------- 4) การเงิน ----------
+  operating_expenses: 'id, name, is_active, frequency',
+  expense_payments: 'id, operating_expense_id, payment_date, category',
+
+  // ---------- 5) สรุปผล ----------
+  daily_summary: 'id, &summary_date, data_source',
+
+  // ---------- 6) Export/Import metadata ----------
+  system_meta: 'id, &key',
+});
+
+
+
+// ============================================================
+// repository.js (embedded)
+// ============================================================
+// repository.js
+// ฟังก์ชันหลักที่ห่อ business logic ของระบบ "ตัวตึงก๋วยเตี๋ยวไก่มะระ บุฟเฟต์"
+// อ้างอิง SCHEMA_ADDENDUM_daily-entry.md (v1 หลังปรับเป็น daily aggregate entry)
+
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+function uuid() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  // fallback UUIDv4 (เผื่อ environment ไม่มี crypto.randomUUID)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+async function getSetting(key, fallback = null) {
+  const row = await db.system_settings.where('key').equals(key).first();
+  return row ? row.value : fallback;
+}
+
+async function setSetting(key, value) {
+  const existing = await db.system_settings.where('key').equals(key).first();
+  const record = { id: existing ? existing.id : uuid(), key, value: String(value), updated_at: nowIso() };
+  await db.system_settings.put(record);
+  return record;
+}
+
+// ---------------------------------------------------------------------------
+// 1) Daily Entries (แทน orders เดิม)
+// ---------------------------------------------------------------------------
+
+/**
+ * สร้างหรืออัปเดต daily_entries ของวันที่ระบุ พร้อม snapshot ราคาบุฟเฟต์ปัจจุบัน
+ * และบันทึก before/after ลง daily_entry_edit_logs โดยอัตโนมัติ
+ *
+ * @param {object} input
+ *   entry_date (string 'YYYY-MM-DD', required)
+ *   buffet_adult_count, buffet_child_count (int)
+ *   ala_carte_total, takeaway_total (decimal)
+ *   takeaway_count (int) — ใช้คำนวณค่าถุงอัตโนมัติตอนสร้าง daily_summary
+ *   note (string, optional)
+ *   recorded_by (shift_id)
+ *   adult_package_name / child_package_name — ชื่อ buffet_packages ที่จะดึงราคามา snapshot
+ *       (default: "ผู้ใหญ่" / "เด็ก")
+ */
+async function upsertDailyEntry(input) {
+  const {
+    entry_date,
+    buffet_adult_count = 0,
+    buffet_child_count = 0,
+    ala_carte_total = 0,
+    takeaway_total = 0,
+    takeaway_count = 0,
+    note = null,
+    recorded_by = null,
+    adult_package_name = 'ผู้ใหญ่',
+    child_package_name = 'เด็ก',
+  } = input;
+
+  if (!entry_date) throw new Error('entry_date is required');
+
+  return db.transaction(
+    'rw',
+    db.daily_entries,
+    db.daily_addon_sales,
+    db.daily_entry_edit_logs,
+    db.buffet_packages,
+    async () => {
+      const existing = await db.daily_entries.where('entry_date').equals(entry_date).first();
+
+      // ราคาบุฟเฟต์ — snapshot ไว้ตายตัว "ครั้งแรกที่สร้าง entry เท่านั้น"
+      // ถ้าเป็นการแก้ไข (edit) ของวันเดิม ต้องคง snapshot เดิมไว้ ห้ามดึงราคาปัจจุบันมาทับ
+      // (มิฉะนั้นแก้ไขจำนวนหัวย้อนหลังหลังราคาขึ้น จะทำให้วันเก่าถูกคิดราคาใหม่ผิดหลักการ snapshot)
+      let buffet_adult_price_snapshot = existing?.buffet_adult_price_snapshot;
+      let buffet_child_price_snapshot = existing?.buffet_child_price_snapshot;
+
+      if (!existing) {
+        const adultPkg = await db.buffet_packages.where('name').equals(adult_package_name).first();
+        const childPkg = await db.buffet_packages.where('name').equals(child_package_name).first();
+        buffet_adult_price_snapshot = adultPkg ? adultPkg.price : 0;
+        buffet_child_price_snapshot = childPkg ? childPkg.price : 0;
+      }
+      // อนุญาตให้ override snapshot ได้แบบ explicit เท่านั้น (เช่น แก้ราคาที่กรอกผิดจริงๆ)
+      if (input.adult_price_snapshot !== undefined) buffet_adult_price_snapshot = input.adult_price_snapshot;
+      if (input.child_price_snapshot !== undefined) buffet_child_price_snapshot = input.child_price_snapshot;
+
+      const before_snapshot = existing ? await buildDailySnapshot(entry_date) : null;
+
+      const record = {
+        id: existing ? existing.id : uuid(),
+        entry_date,
+        buffet_adult_count,
+        buffet_adult_price_snapshot,
+        buffet_child_count,
+        buffet_child_price_snapshot,
+        ala_carte_total,
+        takeaway_total,
+        takeaway_count,
+        note,
+        recorded_by,
+        created_at: existing ? existing.created_at : nowIso(),
+        updated_at: nowIso(),
+      };
+
+      await db.daily_entries.put(record);
+
+      const after_snapshot = await buildDailySnapshot(entry_date);
+
+      await db.daily_entry_edit_logs.add({
+        id: uuid(),
+        entry_date,
+        action: existing ? 'edit' : 'create',
+        changed_at: nowIso(),
+        changed_by: recorded_by,
+        before_snapshot,
+        after_snapshot,
+        reason: null,
+      });
+
+      return record;
+    }
+  ).then(async (record) => {
+    await generateDailySummary(entry_date);
+    return record;
+  });
+}
+
+/**
+ * บันทึก/แก้ไขจำนวนที่ขายของเมนู addon (น้ำ/ขนม) ในวันที่ระบุ
+ * ใช้ semantics แบบ "set" (กำหนด quantity ใหม่ทับของเดิม) ไม่ใช่บวกเพิ่ม
+ */
+async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by = null }) {
+  if (!entry_date || !menu_item_id) throw new Error('entry_date and menu_item_id are required');
+
+  const entry = await db.daily_entries.where('entry_date').equals(entry_date).first();
+  if (!entry) {
+    throw new Error(`ต้องสร้าง daily_entries ของวันที่ ${entry_date} ก่อน จึงจะบันทึกยอดขาย addon ได้`);
+  }
+
+  const menuItem = await db.menu_items.get(menu_item_id);
+  if (!menuItem) throw new Error(`ไม่พบ menu_item_id: ${menu_item_id}`);
+  if (menuItem.item_type !== 'addon') {
+    throw new Error(`menu_item "${menuItem.name}" ไม่ใช่ item_type='addon'`);
+  }
+
+  return db.transaction('rw', db.daily_entries, db.daily_addon_sales, db.daily_entry_edit_logs, async () => {
+    const before_snapshot = await buildDailySnapshot(entry_date);
+
+    const existingRow = await db.daily_addon_sales
+      .where('[entry_date+menu_item_id]')
+      .equals([entry_date, menu_item_id])
+      .first();
+
+    const unit_price_snapshot = menuItem.default_price;
+    const subtotal = quantity * unit_price_snapshot;
+
+    const record = {
+      id: existingRow ? existingRow.id : uuid(),
+      entry_date,
+      menu_item_id,
+      quantity,
+      unit_price_snapshot,
+      subtotal,
+    };
+    await db.daily_addon_sales.put(record);
+
+    const after_snapshot = await buildDailySnapshot(entry_date);
+
+    await db.daily_entry_edit_logs.add({
+      id: uuid(),
+      entry_date,
+      action: existingRow ? 'edit' : 'create',
+      changed_at: nowIso(),
+      changed_by: recorded_by,
+      before_snapshot,
+      after_snapshot,
+      reason: `addon sale: ${menuItem.name}`,
+    });
+
+    return record;
+  }).then(async (record) => {
+    await generateDailySummary(entry_date);
+    return record;
+  });
+}
+
+async function buildDailySnapshot(entry_date) {
+  const entry = await db.daily_entries.where('entry_date').equals(entry_date).first();
+  const addons = await db.daily_addon_sales.where('entry_date').equals(entry_date).toArray();
+  return { entry: entry ?? null, addons };
+}
+
+// ---------------------------------------------------------------------------
+// 2) วัตถุดิบ — ซื้อเข้า (Weighted Average Cost)
+// ---------------------------------------------------------------------------
+
+async function recordPurchase({ ingredient_id, purchase_date, quantity, unit_cost, recorded_by = null }) {
+  return db.transaction('rw', db.ingredients, db.ingredient_purchases, async () => {
+    const ingredient = await db.ingredients.get(ingredient_id);
+    if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
+
+    const stock_before = ingredient.current_stock || 0;
+    const avg_cost_before = ingredient.current_avg_cost || 0;
+    const total_cost = quantity * unit_cost;
+    const stock_after = stock_before + quantity;
+    const avg_cost_after =
+      stock_after > 0 ? (stock_before * avg_cost_before + quantity * unit_cost) / stock_after : unit_cost;
+
+    const record = {
+      id: uuid(),
+      ingredient_id,
+      purchase_date,
+      quantity,
+      unit_cost,
+      total_cost,
+      stock_before,
+      avg_cost_before,
+      avg_cost_after,
+      recorded_by,
+      created_at: nowIso(),
+    };
+    await db.ingredient_purchases.add(record);
+
+    await db.ingredients.update(ingredient_id, {
+      current_stock: stock_after,
+      current_avg_cost: avg_cost_after,
+    });
+
+    return record;
+  });
+}
+
+/**
+ * แก้ไข/ลบรายการซื้อเก่า ต้อง cascade recalculate ทุกรายการที่เกิดหลังจากนั้น
+ * (ตามคำเตือนในเอกสารข้อ 4 — ingredient_purchases)
+ * v1 note: recalculate เฉพาะ chain ของ ingredient_purchases เท่านั้น
+ * ยังไม่รวม interleave กับ ingredient_stock_counts ในการคำนวณ current_stock แบบละเอียด
+ */
+async function recalculatePurchaseChain(ingredient_id) {
+  return db.transaction('rw', db.ingredients, db.ingredient_purchases, async () => {
+    const purchases = await db.ingredient_purchases
+      .where('ingredient_id')
+      .equals(ingredient_id)
+      .sortBy('purchase_date');
+
+    let runningStock = 0;
+    let runningAvgCost = 0;
+
+    for (const p of purchases) {
+      const stock_before = runningStock;
+      const avg_cost_before = runningAvgCost;
+      const stock_after = stock_before + p.quantity;
+      const avg_cost_after =
+        stock_after > 0 ? (stock_before * avg_cost_before + p.quantity * p.unit_cost) / stock_after : p.unit_cost;
+
+      await db.ingredient_purchases.update(p.id, {
+        stock_before,
+        avg_cost_before,
+        avg_cost_after,
+        total_cost: p.quantity * p.unit_cost,
+      });
+
+      runningStock = stock_after;
+      runningAvgCost = avg_cost_after;
+    }
+
+    await db.ingredients.update(ingredient_id, {
+      current_stock: runningStock,
+      current_avg_cost: runningAvgCost,
+    });
+
+    return { current_stock: runningStock, current_avg_cost: runningAvgCost };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 3) วัตถุดิบ — นับสต็อกปิดร้าน (ตัวกำหนด COGS จริง)
+// ---------------------------------------------------------------------------
+
+async function recordStockCount({ ingredient_id, count_date, closing_count, recorded_by = null }) {
+  return db.transaction(
+    'rw',
+    db.ingredients,
+    db.ingredient_purchases,
+    db.ingredient_stock_counts,
+    async () => {
+      const ingredient = await db.ingredients.get(ingredient_id);
+      if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
+
+      const priorCounts = await db.ingredient_stock_counts
+        .where('ingredient_id')
+        .equals(ingredient_id)
+        .and((c) => c.count_date < count_date)
+        .sortBy('count_date');
+      const lastCount = priorCounts.length ? priorCounts[priorCounts.length - 1] : null;
+
+      const opening_stock = lastCount ? lastCount.closing_count : 0;
+      const rangeStart = lastCount ? lastCount.count_date : null;
+
+      const purchasesInRange = await db.ingredient_purchases
+        .where('ingredient_id')
+        .equals(ingredient_id)
+        .and((p) => (rangeStart === null || p.purchase_date > rangeStart) && p.purchase_date <= count_date)
+        .toArray();
+      const purchased_qty = purchasesInRange.reduce((sum, p) => sum + p.quantity, 0);
+
+      const used_qty = opening_stock + purchased_qty - closing_count;
+
+      // avg cost ล่าสุด ณ วันนับ (ใช้ purchase ล่าสุดที่ <= count_date, fallback = current_avg_cost)
+      const purchasesUpToDate = await db.ingredient_purchases
+        .where('ingredient_id')
+        .equals(ingredient_id)
+        .and((p) => p.purchase_date <= count_date)
+        .sortBy('purchase_date');
+      const avgCostAtCount =
+        purchasesUpToDate.length > 0
+          ? purchasesUpToDate[purchasesUpToDate.length - 1].avg_cost_after
+          : ingredient.current_avg_cost || 0;
+
+      const used_value = used_qty * avgCostAtCount;
+
+      const record = {
+        id: uuid(),
+        ingredient_id,
+        count_date,
+        opening_stock,
+        purchased_qty,
+        closing_count,
+        used_qty,
+        used_value,
+        recorded_by,
+        created_at: nowIso(),
+      };
+
+      // unique (ingredient_id, count_date) — ถ้ามีอยู่แล้วให้ทับ (put)
+      const existing = await db.ingredient_stock_counts
+        .where('[ingredient_id+count_date]')
+        .equals([ingredient_id, count_date])
+        .first();
+      if (existing) record.id = existing.id;
+
+      await db.ingredient_stock_counts.put(record);
+
+      // cache current_stock อัปเดตเป็นยอดนับจริงล่าสุด
+      await db.ingredients.update(ingredient_id, { current_stock: closing_count });
+
+      return record;
+    }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4) Daily Summary — background recalculation
+// ---------------------------------------------------------------------------
+
+async function generateDailySummary(summary_date) {
+  const entry = await db.daily_entries.where('entry_date').equals(summary_date).first();
+
+  // ไม่มี daily_entries = วันแบบ estimated (กรอกมือ) → ไม่แตะ ปล่อยให้ผู้ใช้กรอกเอง
+  if (!entry) return null;
+
+  const addons = await db.daily_addon_sales.where('entry_date').equals(summary_date).toArray();
+  const sales_addon = addons.reduce((sum, a) => sum + a.subtotal, 0);
+
+  const sales_buffet =
+    entry.buffet_adult_count * entry.buffet_adult_price_snapshot +
+    entry.buffet_child_count * entry.buffet_child_price_snapshot;
+  const sales_ala_carte = entry.ala_carte_total;
+  const sales_takeaway = entry.takeaway_total;
+
+  // COGS = รวม used_value ของวัตถุดิบที่นับสต็อก "ตรงวันนี้พอดี"
+  const stockCounts = await db.ingredient_stock_counts.where('count_date').equals(summary_date).toArray();
+  const cogs = stockCounts.reduce((sum, c) => sum + c.used_value, 0);
+
+  // ค่าถุง/ยางรัด (packaging) — คำนวณอัตโนมัติจาก default_packaging_fee × takeaway_count
+  const packagingFee = Number(await getSetting('default_packaging_fee', 0));
+  const packaging_cost = packagingFee * (entry.takeaway_count || 0);
+
+  // ค่าใช้จ่ายประจำแบบ accrual (เฉลี่ย/วัน) จาก operating_expenses ที่ active ณ วันนี้
+  const activeExpenses = (await db.operating_expenses.toArray()).filter((e) => {
+    if (!e.is_active) return false;
+    if (e.start_date && e.start_date > summary_date) return false;
+    if (e.end_date && e.end_date < summary_date) return false;
+    return true;
+  });
+  const operating_expense = activeExpenses.reduce((sum, e) => {
+    const divisor = e.frequency === 'weekly' ? 7 : 30;
+    return sum + e.amount / divisor;
+  }, 0);
+
+  const net_profit =
+    sales_buffet + sales_ala_carte + sales_takeaway + sales_addon - cogs - packaging_cost - operating_expense;
+
+  const record = {
+    id: uuid(),
+    summary_date,
+    data_source: 'transactional',
+    sales_buffet,
+    sales_ala_carte,
+    sales_takeaway,
+    sales_addon,
+    cogs,
+    packaging_cost,
+    operating_expense,
+    net_profit,
+    note: null,
+    updated_at: nowIso(),
+  };
+
+  const existing = await db.daily_summary.where('summary_date').equals(summary_date).first();
+  if (existing) record.id = existing.id;
+
+  await db.daily_summary.put(record);
+  return record;
+}
+
+/**
+ * บันทึกวันแบบ estimated (ก่อนเปิดระบบ/ข้อมูลไม่ครบ) — กรอกยอดรวมตรงๆ ไม่ผ่าน daily_entries
+ * ฟังก์ชันนี้จะไม่ถูก generateDailySummary() เขียนทับ เพราะไม่มี daily_entries รองรับ
+ */
+async function upsertEstimatedDailySummary({ summary_date, sales_buffet = 0, sales_ala_carte = 0, sales_takeaway = 0, sales_addon = 0, cogs = 0, packaging_cost = 0, operating_expense = 0, note = null }) {
+  const net_profit = sales_buffet + sales_ala_carte + sales_takeaway + sales_addon - cogs - packaging_cost - operating_expense;
+  const existing = await db.daily_summary.where('summary_date').equals(summary_date).first();
+  const record = {
+    id: existing ? existing.id : uuid(),
+    summary_date,
+    data_source: 'estimated',
+    sales_buffet,
+    sales_ala_carte,
+    sales_takeaway,
+    sales_addon,
+    cogs,
+    packaging_cost,
+    operating_expense,
+    net_profit,
+    note,
+    updated_at: nowIso(),
+  };
+  await db.daily_summary.put(record);
+  return record;
+}
+
+/** อ่านรายงานแบบเลือกช่วงวันที่ (from–to) สำหรับกราฟ/รายงาน */
+async function getDailySummaryRange(fromDate, toDate) {
+  return db.daily_summary
+    .where('summary_date')
+    .between(fromDate, toDate, true, true)
+    .sortBy('summary_date');
+}
+
+// ---------------------------------------------------------------------------
+// 5) Master Data CRUD (Product Management)
+// ---------------------------------------------------------------------------
+// กติกาการลบ (ตาม database-design-tuadueng.md ข้อ 8.2):
+//   - ลบได้จริง (hard delete) เฉพาะถ้าไม่เคยถูกอ้างอิงในข้อมูลธุรกรรมใดๆ
+//   - ถ้าเคยถูกอ้างอิงแล้ว ให้ soft-delete (is_active = false) แทน เพื่อไม่ให้ข้อมูลเก่าพัง
+
+// --- buffet_packages ---
+
+async function createBuffetPackage({ name, price, description = null }) {
+  const record = { id: uuid(), name, price, description, is_active: true, updated_at: nowIso() };
+  await db.buffet_packages.add(record);
+  return record;
+}
+
+async function updateBuffetPackage(id, changes) {
+  await db.buffet_packages.update(id, { ...changes, updated_at: nowIso() });
+  return db.buffet_packages.get(id);
+}
+
+async function listBuffetPackages({ activeOnly = false } = {}) {
+  const all = await db.buffet_packages.toArray();
+  return activeOnly ? all.filter((p) => p.is_active) : all;
+}
+
+/** buffet_packages ไม่มี FK อ้างอิงตรงจาก daily_entries (ใช้ snapshot ราคาไปแล้ว)
+ *  จึงลบจริงได้เสมอ ไม่ต้องเช็ค reference — แต่ default เป็น soft-delete เพื่อความปลอดภัย
+ *  ผู้ใช้เลือก hardDelete: true ได้ถ้าต้องการลบจริง (เช่น สร้างผิดพลาดแล้วอยากลบทิ้ง) */
+async function removeBuffetPackage(id, { hardDelete = false } = {}) {
+  if (hardDelete) {
+    await db.buffet_packages.delete(id);
+    return { id, deleted: true };
+  }
+  await db.buffet_packages.update(id, { is_active: false, updated_at: nowIso() });
+  return { id, deleted: false, deactivated: true };
+}
+
+// --- menu_categories ---
+
+async function createMenuCategory({ name, display_order = 0 }) {
+  const record = { id: uuid(), name, display_order, is_active: true };
+  await db.menu_categories.add(record);
+  return record;
+}
+
+async function updateMenuCategory(id, changes) {
+  await db.menu_categories.update(id, changes);
+  return db.menu_categories.get(id);
+}
+
+async function listMenuCategories({ activeOnly = false } = {}) {
+  const all = await db.menu_categories.toArray();
+  const filtered = activeOnly ? all.filter((c) => c.is_active) : all;
+  return filtered.sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+}
+
+async function removeMenuCategory(id) {
+  const inUse = await db.menu_items.where('category_id').equals(id).count();
+  if (inUse > 0) {
+    await db.menu_categories.update(id, { is_active: false });
+    return { id, deleted: false, deactivated: true, reason: `มี ${inUse} เมนูผูกอยู่กับหมวดนี้` };
+  }
+  await db.menu_categories.delete(id);
+  return { id, deleted: true };
+}
+
+// --- menu_items ---
+
+async function createMenuItem({ category_id, name, unit_label = null, default_price, item_type, is_addon_to_buffet = false }) {
+  const record = {
+    id: uuid(),
+    category_id,
+    name,
+    unit_label,
+    default_price,
+    item_type, // 'dish' | 'addon' | 'packaging'
+    is_addon_to_buffet,
+    is_active: true,
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  await db.menu_items.add(record);
+  return record;
+}
+
+async function updateMenuItem(id, changes) {
+  await db.menu_items.update(id, { ...changes, updated_at: nowIso() });
+  return db.menu_items.get(id);
+}
+
+async function listMenuItems({ item_type = null, activeOnly = false } = {}) {
+  let all = await db.menu_items.toArray();
+  if (item_type) all = all.filter((m) => m.item_type === item_type);
+  if (activeOnly) all = all.filter((m) => m.is_active);
+  return all;
+}
+
+/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน daily_addon_sales หรือ menu_item_ingredients เลย
+ *  (ตามกติกาเอกสารข้อ 8.2 ข้อ "เมนู/วัตถุดิบ") — ถ้าเคยขายไปแล้วต้อง soft-delete แทน */
+async function removeMenuItem(id) {
+  const referencedInSales = await db.daily_addon_sales.where('menu_item_id').equals(id).count();
+  const referencedInIngredients = await db.menu_item_ingredients.where('menu_item_id').equals(id).count();
+
+  if (referencedInSales > 0 || referencedInIngredients > 0) {
+    await db.menu_items.update(id, { is_active: false, updated_at: nowIso() });
+    return {
+      id,
+      deleted: false,
+      deactivated: true,
+      reason: `ถูกอ้างอิงในยอดขาย (${referencedInSales}) หรือสูตรวัตถุดิบ (${referencedInIngredients}) แล้ว`,
+    };
+  }
+  await db.menu_items.delete(id);
+  return { id, deleted: true };
+}
+
+// --- shifts ---
+
+async function createShift({ name }) {
+  const record = { id: uuid(), name };
+  await db.shifts.add(record);
+  return record;
+}
+
+async function listShifts() {
+  return db.shifts.toArray();
+}
+
+// --- ingredients ---
+
+async function createIngredient({ name, category = null, unit, reorder_point = 0, count_frequency = 'daily' }) {
+  if (!['daily', 'weekly'].includes(count_frequency)) {
+    throw new Error(`count_frequency ต้องเป็น 'daily' หรือ 'weekly' เท่านั้น (ได้ '${count_frequency}')`);
+  }
+  const record = {
+    id: uuid(),
+    name,
+    category,
+    unit,
+    reorder_point,
+    count_frequency,
+    current_stock: 0,
+    current_avg_cost: 0,
+    is_active: true,
+  };
+  await db.ingredients.add(record);
+  return record;
+}
+
+async function updateIngredient(id, changes) {
+  await db.ingredients.update(id, changes);
+  return db.ingredients.get(id);
+}
+
+async function listIngredients({ activeOnly = false } = {}) {
+  const all = await db.ingredients.toArray();
+  return activeOnly ? all.filter((i) => i.is_active) : all;
+}
+
+/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน ingredient_purchases, ingredient_stock_counts,
+ *  หรือ menu_item_ingredients เลย — มิฉะนั้น soft-delete (ตามกติกาเอกสารข้อ 8.2) */
+async function removeIngredient(id) {
+  const referencedInPurchases = await db.ingredient_purchases.where('ingredient_id').equals(id).count();
+  const referencedInCounts = await db.ingredient_stock_counts.where('ingredient_id').equals(id).count();
+  const referencedInMenus = await db.menu_item_ingredients.where('ingredient_id').equals(id).count();
+
+  if (referencedInPurchases > 0 || referencedInCounts > 0 || referencedInMenus > 0) {
+    await db.ingredients.update(id, { is_active: false });
+    return {
+      id,
+      deleted: false,
+      deactivated: true,
+      reason: `ถูกอ้างอิงใน purchases(${referencedInPurchases}) / stock_counts(${referencedInCounts}) / menu_item_ingredients(${referencedInMenus})`,
+    };
+  }
+  await db.ingredients.delete(id);
+  return { id, deleted: true };
+}
+
+/** รายการวัตถุดิบที่เหลือต่ำกว่า reorder_point — ใช้แจ้งเตือน "ใกล้หมด" */
+async function listLowStockIngredients() {
+  const activeIngredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
+  return activeIngredients.filter((i) => i.current_stock <= i.reorder_point);
+}
+
+/** เช็ควัตถุดิบที่ "เกินกำหนดนับสต็อกแล้ว" ณ วันที่ระบุ (default = วันนี้)
+ *  daily  -> ต้องมี record ของ checkDate พอดี ไม่งั้นถือว่ายังไม่ได้นับวันนี้
+ *  weekly -> ถ้าห่างจากครั้งล่าสุด >= 7 วัน ถือว่าเกินกำหนด (หรือไม่เคยนับเลย) */
+async function listOverdueStockCounts(checkDate = new Date().toISOString().slice(0, 10)) {
+  const ingredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
+  const overdue = [];
+
+  for (const ing of ingredients) {
+    const counts = await db.ingredient_stock_counts.where('ingredient_id').equals(ing.id).sortBy('count_date');
+    const lastCount = counts.length ? counts[counts.length - 1] : null;
+
+    if (ing.count_frequency === 'daily') {
+      const countedToday = counts.some((c) => c.count_date === checkDate);
+      if (!countedToday) overdue.push({ ingredient: ing, reason: 'ยังไม่ได้นับวันนี้', last_count_date: lastCount?.count_date ?? null });
+    } else if (ing.count_frequency === 'weekly') {
+      if (!lastCount) {
+        overdue.push({ ingredient: ing, reason: 'ยังไม่เคยนับเลย', last_count_date: null });
+      } else {
+        const daysSince = Math.round((new Date(checkDate) - new Date(lastCount.count_date)) / 86400000);
+        if (daysSince >= 7) {
+          overdue.push({ ingredient: ing, reason: `เกินกำหนดนับแล้ว ${daysSince} วัน`, last_count_date: lastCount.count_date });
+        }
+      }
+    }
+  }
+  return overdue;
+}
+
+// ---------------------------------------------------------------------------
+// 5b) Finance CRUD (operating_expenses accrual + expense_payments cash จริง)
+// ---------------------------------------------------------------------------
+
+// --- operating_expenses ---
+
+async function createOperatingExpense({ name, amount, frequency, start_date, end_date = null }) {
+  if (!['monthly', 'weekly'].includes(frequency)) {
+    throw new Error(`frequency ต้องเป็น 'monthly' หรือ 'weekly' เท่านั้น (ได้ '${frequency}')`);
+  }
+  const record = { id: uuid(), name, amount, frequency, start_date, end_date, is_active: true };
+  await db.operating_expenses.add(record);
+  return record;
+}
+
+async function updateOperatingExpense(id, changes) {
+  await db.operating_expenses.update(id, changes);
+  return db.operating_expenses.get(id);
+}
+
+async function listOperatingExpenses({ activeOnly = false } = {}) {
+  const all = await db.operating_expenses.toArray();
+  return activeOnly ? all.filter((e) => e.is_active) : all;
+}
+
+/** ลบได้จริงเฉพาะถ้าไม่เคยมีการจ่ายจริง (expense_payments) ผูกอยู่เลย มิฉะนั้น soft-delete
+ *  (การ "หยุด" ค่าใช้จ่ายประจำที่เคยจ่ายจริงแล้ว ควรตั้ง end_date แทนการลบ) */
+async function removeOperatingExpense(id) {
+  const referencedInPayments = await db.expense_payments.where('operating_expense_id').equals(id).count();
+  if (referencedInPayments > 0) {
+    await db.operating_expenses.update(id, { is_active: false });
+    return { id, deleted: false, deactivated: true, reason: `มีประวัติจ่ายจริงแล้ว (${referencedInPayments} รายการ) — แนะนำตั้ง end_date แทน` };
+  }
+  await db.operating_expenses.delete(id);
+  return { id, deleted: true };
+}
+
+// --- expense_payments (จ่ายจริง / cash) ---
+
+/** operating_expense_id เป็น optional — รองรับค่าใช้จ่ายแบบ ad-hoc ที่ไม่ได้ผูกกับรายการประจำ
+ *  (เช่น ซ่อมแอร์ครั้งเดียว) โดยยังต้องระบุ category เพื่อจัดกลุ่มในรายงาน */
+async function recordExpensePayment({ operating_expense_id = null, payment_date, amount, category, note = null }) {
+  if (!payment_date) throw new Error('payment_date is required');
+  if (!category) throw new Error('category is required');
+
+  if (operating_expense_id) {
+    const exists = await db.operating_expenses.get(operating_expense_id);
+    if (!exists) throw new Error(`ไม่พบ operating_expense_id: ${operating_expense_id}`);
+  }
+
+  const record = { id: uuid(), operating_expense_id, payment_date, amount, category, note, created_at: nowIso() };
+  await db.expense_payments.add(record);
+  return record;
+}
+
+async function updateExpensePayment(id, changes) {
+  await db.expense_payments.update(id, changes);
+  return db.expense_payments.get(id);
+}
+
+async function removeExpensePayment(id) {
+  await db.expense_payments.delete(id);
+  return { id, deleted: true };
+}
+
+async function getExpensePaymentsRange(fromDate, toDate) {
+  return db.expense_payments
+    .where('payment_date')
+    .between(fromDate, toDate, true, true)
+    .toArray();
+}
+
+// ---------------------------------------------------------------------------
+// 5c) menu_item_ingredients — เชื่อมโยงเมนู↔วัตถุดิบแบบหลวมๆ
+// ---------------------------------------------------------------------------
+// หมายเหตุ: ใช้เพื่อ "แจ้งเตือน" เท่านั้น (เช่น เมนูนี้อาจได้รับผลกระทบถ้าวัตถุดิบใกล้หมด)
+// ไม่ได้ใช้คำนวณต้นทุนจริงเป็นสูตรตายตัว เพราะร้านไม่มีสูตรที่แน่นอน (ดู database-design-tuadueng.md)
+
+async function linkMenuItemIngredient({ menu_item_id, ingredient_id, note = null }) {
+  const menuItem = await db.menu_items.get(menu_item_id);
+  if (!menuItem) throw new Error(`ไม่พบ menu_item_id: ${menu_item_id}`);
+  const ingredient = await db.ingredients.get(ingredient_id);
+  if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
+
+  const existing = await db.menu_item_ingredients
+    .where('[menu_item_id+ingredient_id]')
+    .equals([menu_item_id, ingredient_id])
+    .first();
+  if (existing) {
+    await db.menu_item_ingredients.update(existing.id, { note });
+    return db.menu_item_ingredients.get(existing.id);
+  }
+
+  const record = { id: uuid(), menu_item_id, ingredient_id, note };
+  await db.menu_item_ingredients.add(record);
+  return record;
+}
+
+async function unlinkMenuItemIngredient(menu_item_id, ingredient_id) {
+  const existing = await db.menu_item_ingredients
+    .where('[menu_item_id+ingredient_id]')
+    .equals([menu_item_id, ingredient_id])
+    .first();
+  if (!existing) return { deleted: false, reason: 'ไม่พบความเชื่อมโยงนี้อยู่แล้ว' };
+  await db.menu_item_ingredients.delete(existing.id);
+  return { deleted: true };
+}
+
+/** วัตถุดิบทั้งหมดที่อาจเกี่ยวข้องกับเมนูนี้ */
+async function listIngredientsForMenuItem(menu_item_id) {
+  const links = await db.menu_item_ingredients.where('menu_item_id').equals(menu_item_id).toArray();
+  const ingredients = await Promise.all(links.map((l) => db.ingredients.get(l.ingredient_id)));
+  return ingredients.filter(Boolean);
+}
+
+/** ใช้ตอบคำถาม "วัตถุดิบนี้ใกล้หมด จะกระทบเมนูอะไรบ้าง" สำหรับหน้าแจ้งเตือน */
+async function listMenuItemsUsingIngredient(ingredient_id) {
+  const links = await db.menu_item_ingredients.where('ingredient_id').equals(ingredient_id).toArray();
+  const menuItems = await Promise.all(links.map((l) => db.menu_items.get(l.menu_item_id)));
+  return menuItems.filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// 5d) cost_references — ต้นทุนอ้างอิง (กรอกมือ ไม่ใช่คำนวณอัตโนมัติ)
+// ---------------------------------------------------------------------------
+
+/** สร้าง/แก้ไขต้นทุนอ้างอิงของ buffet_package หรือ menu_item (upsert ตาม target_type+target_id) */
+async function upsertCostReference({ target_type, target_id, estimated_cost, note = null }) {
+  if (!['buffet_package', 'menu_item'].includes(target_type)) {
+    throw new Error(`target_type ต้องเป็น 'buffet_package' หรือ 'menu_item' เท่านั้น (ได้ '${target_type}')`);
+  }
+  const targetTable = target_type === 'buffet_package' ? db.buffet_packages : db.menu_items;
+  const target = await targetTable.get(target_id);
+  if (!target) throw new Error(`ไม่พบ ${target_type} id: ${target_id}`);
+
+  const existing = await db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
+  const record = {
+    id: existing ? existing.id : uuid(),
+    target_type,
+    target_id,
+    estimated_cost,
+    note,
+    updated_at: nowIso(),
+  };
+  await db.cost_references.put(record);
+  return record;
+}
+
+async function getCostReference(target_type, target_id) {
+  return db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
+}
+
+async function listCostReferences({ target_type = null } = {}) {
+  const all = await db.cost_references.toArray();
+  return target_type ? all.filter((c) => c.target_type === target_type) : all;
+}
+
+async function removeCostReference(target_type, target_id) {
+  const existing = await db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
+  if (!existing) return { deleted: false, reason: 'ไม่พบต้นทุนอ้างอิงนี้อยู่แล้ว' };
+  await db.cost_references.delete(existing.id);
+  return { deleted: true };
+}
+
+// ---------------------------------------------------------------------------
+// 7) Reporting — query แบบสรุป/จัดกลุ่ม สำหรับหน้ารายงาน
+// ---------------------------------------------------------------------------
+
+/** สรุปยอดรวมทั้งช่วง (การ์ดตัวเลขบนหน้ารายงาน) — รวม transactional + estimated ปนกัน */
+async function getSalesReport(fromDate, toDate) {
+  const rows = await getDailySummaryRange(fromDate, toDate);
+
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.sales_buffet += r.sales_buffet || 0;
+      acc.sales_ala_carte += r.sales_ala_carte || 0;
+      acc.sales_takeaway += r.sales_takeaway || 0;
+      acc.sales_addon += r.sales_addon || 0;
+      acc.cogs += r.cogs || 0;
+      acc.packaging_cost += r.packaging_cost || 0;
+      acc.operating_expense += r.operating_expense || 0;
+      acc.net_profit += r.net_profit || 0;
+      return acc;
+    },
+    { sales_buffet: 0, sales_ala_carte: 0, sales_takeaway: 0, sales_addon: 0, cogs: 0, packaging_cost: 0, operating_expense: 0, net_profit: 0 }
+  );
+  totals.total_revenue = totals.sales_buffet + totals.sales_ala_carte + totals.sales_takeaway + totals.sales_addon;
+
+  const days_count = rows.length;
+  const averages = {};
+  for (const key of Object.keys(totals)) {
+    averages[key] = days_count > 0 ? totals[key] / days_count : 0;
+  }
+
+  const by_data_source = rows.reduce((acc, r) => {
+    acc[r.data_source] = (acc[r.data_source] || 0) + 1;
+    return acc;
+  }, {});
+
+  return { from: fromDate, to: toDate, days_count, totals, averages, by_data_source };
+}
+
+/** จัดกลุ่มยอดรายเดือน (YYYY-MM) สำหรับกราฟ/รายงานช่วงยาว */
+async function getMonthlyBreakdown(fromDate, toDate) {
+  const rows = await getDailySummaryRange(fromDate, toDate);
+  const byMonth = {};
+
+  for (const r of rows) {
+    const month = r.summary_date.slice(0, 7); // 'YYYY-MM'
+    if (!byMonth[month]) {
+      byMonth[month] = {
+        month,
+        days_count: 0,
+        sales_buffet: 0,
+        sales_ala_carte: 0,
+        sales_takeaway: 0,
+        sales_addon: 0,
+        cogs: 0,
+        packaging_cost: 0,
+        operating_expense: 0,
+        net_profit: 0,
+      };
+    }
+    const m = byMonth[month];
+    m.days_count += 1;
+    m.sales_buffet += r.sales_buffet || 0;
+    m.sales_ala_carte += r.sales_ala_carte || 0;
+    m.sales_takeaway += r.sales_takeaway || 0;
+    m.sales_addon += r.sales_addon || 0;
+    m.cogs += r.cogs || 0;
+    m.packaging_cost += r.packaging_cost || 0;
+    m.operating_expense += r.operating_expense || 0;
+    m.net_profit += r.net_profit || 0;
+  }
+
+  return Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/** เมนูขายดี (น้ำ/ขนม) ในช่วงวันที่ระบุ เรียงจากขายมากไปน้อย */
+async function getTopSellingAddons(fromDate, toDate, limit = 10) {
+  const rows = await db.daily_addon_sales.where('entry_date').between(fromDate, toDate, true, true).toArray();
+
+  const byMenuItem = {};
+  for (const r of rows) {
+    if (!byMenuItem[r.menu_item_id]) {
+      byMenuItem[r.menu_item_id] = { menu_item_id: r.menu_item_id, total_quantity: 0, total_revenue: 0 };
+    }
+    byMenuItem[r.menu_item_id].total_quantity += r.quantity;
+    byMenuItem[r.menu_item_id].total_revenue += r.subtotal;
+  }
+
+  const results = await Promise.all(
+    Object.values(byMenuItem).map(async (item) => {
+      const menuItem = await db.menu_items.get(item.menu_item_id);
+      return { ...item, name: menuItem ? menuItem.name : '(เมนูถูกลบแล้ว)' };
+    })
+  );
+
+  return results.sort((a, b) => b.total_quantity - a.total_quantity).slice(0, limit);
+}
+
+/** สรุปยอดจ่ายจริง (cash) แยกตามหมวด category ในช่วงวันที่ระบุ */
+async function getExpenseBreakdown(fromDate, toDate) {
+  const rows = await getExpensePaymentsRange(fromDate, toDate);
+  const byCategory = {};
+  for (const r of rows) {
+    byCategory[r.category] = (byCategory[r.category] || 0) + r.amount;
+  }
+  return Object.entries(byCategory)
+    .map(([category, total_amount]) => ({ category, total_amount }))
+    .sort((a, b) => b.total_amount - a.total_amount);
+}
+
+/** สรุปการใช้วัตถุดิบ (จากการนับสต็อก) ของ ingredient เดียว ในช่วงวันที่ระบุ */
+async function getIngredientUsageReport(ingredient_id, fromDate, toDate) {
+  const records = await db.ingredient_stock_counts
+    .where('ingredient_id')
+    .equals(ingredient_id)
+    .and((c) => c.count_date >= fromDate && c.count_date <= toDate)
+    .sortBy('count_date');
+
+  const total_used_qty = records.reduce((sum, r) => sum + r.used_qty, 0);
+  const total_used_value = records.reduce((sum, r) => sum + r.used_value, 0);
+
+  return { ingredient_id, from: fromDate, to: toDate, total_used_qty, total_used_value, records };
+}
+
+// ---------------------------------------------------------------------------
+// 8) Export / Import (ย้ายเครื่อง)
+// ---------------------------------------------------------------------------
+
+async function exportAllData() {
+  const dump = {};
+  for (const table of db.tables) {
+    dump[table.name] = await table.toArray();
+  }
+  return {
+    db_version: db.verno,
+    exported_at: nowIso(),
+    tables: dump,
+  };
+}
+
+async function importAllData(payload) {
+  const { tables } = payload;
+  return db.transaction('rw', db.tables, async () => {
+    for (const table of db.tables) {
+      await table.clear();
+      const rows = tables[table.name];
+      if (rows && rows.length) {
+        await table.bulkAdd(rows);
+      }
+    }
+  });
+}
+
+
+// ============================================================
+// UI application logic — เชื่อม repository functions เข้ากับหน้าจอ
+// ============================================================
+
+const $header = document.getElementById('app-header');
+const $content = document.getElementById('app-content');
+const $toast = document.getElementById('toast');
+const $nav = document.getElementById('bottom-nav');
+
+function showToast(msg) {
+  $toast.textContent = msg;
+  $toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => $toast.classList.remove('show'), 2200);
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatMoney(n) {
+  const num = Number(n) || 0;
+  return num.toLocaleString('th-TH', { maximumFractionDigits: 0 }) + ' บาท';
+}
+
+function formatDateThai(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('th-TH', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ------------------------------------------------------------
+// Bootstrap ข้อมูลเริ่มต้น (ครั้งแรกที่เปิดแอป)
+// ------------------------------------------------------------
+async function bootstrapDefaults() {
+  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
+  if (!adultPkg) await createBuffetPackage({ name: 'ผู้ใหญ่', price: 0 });
+
+  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
+  if (!childPkg) await createBuffetPackage({ name: 'เด็ก', price: 0 });
+
+  const fee = await getSetting('default_packaging_fee', null);
+  if (fee === null) await setSetting('default_packaging_fee', 0);
+
+  const shifts = await listShifts();
+  if (shifts.length === 0) await createShift({ name: 'ทั่วไป' });
+
+  const cats = await listMenuCategories();
+  if (cats.length === 0) {
+    await createMenuCategory({ name: 'เครื่องดื่ม', display_order: 1 });
+    await createMenuCategory({ name: 'ของทานเล่น', display_order: 2 });
+  }
+}
+
+// ------------------------------------------------------------
+// Header (ตั๋วสรุปยอดวันนี้) — แสดงทุกหน้า
+// ------------------------------------------------------------
+async function renderHeader() {
+  const today = todayStr();
+  const summary = await db.daily_summary.where('summary_date').equals(today).first();
+
+  $header.innerHTML = `
+    <div class="ticket">
+      <div class="ticket-eyebrow">วันนี้</div>
+      <div class="ticket-date">${formatDateThai(today)}</div>
+      <div class="ticket-stat-label">กำไรสุทธิวันนี้</div>
+      ${
+        summary
+          ? `<div class="ticket-stat-value">${formatMoney(summary.net_profit)}</div>`
+          : `<div class="ticket-stat-value pending">ยังไม่ได้บันทึกยอดวันนี้</div>
+             <button class="ticket-cta" data-goto="entry">บันทึกเลย →</button>`
+      }
+    </div>
+  `;
+  $header.querySelector('[data-goto]')?.addEventListener('click', (e) => navigate(e.target.dataset.goto));
+}
+
+// ------------------------------------------------------------
+// View: Dashboard
+// ------------------------------------------------------------
+async function renderDashboard() {
+  const to = todayStr();
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - 6);
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const rows = await getDailySummaryRange(from, to);
+  const lowStock = await listLowStockIngredients();
+  const overdue = await listOverdueStockCounts(to);
+
+  let alertsHtml = '';
+  if (lowStock.length > 0 || overdue.length > 0) {
+    alertsHtml = `<div class="alert-row">`;
+    if (lowStock.length > 0) {
+      alertsHtml += `<span class="stamp warn">วัตถุดิบใกล้หมด ${lowStock.length} รายการ</span>`;
+    }
+    if (overdue.length > 0) {
+      alertsHtml += `<span class="stamp warn">ยังไม่ได้นับสต็อก ${overdue.length} รายการ</span>`;
+    }
+    alertsHtml += `</div>`;
+  }
+
+  const rowsHtml = rows.length
+    ? rows
+        .slice()
+        .reverse()
+        .map((r) => {
+          const cls = r.net_profit >= 0 ? 'profit-pos' : 'profit-neg';
+          const src = r.data_source === 'estimated' ? ' (ประมาณการ)' : '';
+          return `<div class="row-item">
+            <span class="label">${r.summary_date}${src}</span>
+            <span class="value ${cls}">${formatMoney(r.net_profit)}</span>
+          </div>`;
+        })
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีข้อมูล 7 วันล่าสุด</p><p>เริ่มบันทึกยอดวันนี้ได้เลย</p></div>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">ภาพรวม</h1>
+    ${alertsHtml}
+    <div class="card">
+      <h2>7 วันล่าสุด</h2>
+      <div class="row-list">${rowsHtml}</div>
+    </div>
+  `;
+}
+
+// ------------------------------------------------------------
+// View: บันทึกยอดวันนี้ (Daily Entry)
+// ------------------------------------------------------------
+async function renderEntry(dateStr) {
+  const date = dateStr || todayStr();
+  const entry = await db.daily_entries.where('entry_date').equals(date).first();
+  const addonItems = await listMenuItems({ item_type: 'addon', activeOnly: true });
+  const existingAddons = await db.daily_addon_sales.where('entry_date').equals(date).toArray();
+  const addonMap = Object.fromEntries(existingAddons.map((a) => [a.menu_item_id, a.quantity]));
+
+  const addonRowsHtml = addonItems.length
+    ? addonItems
+        .map(
+          (item) => `
+        <div class="addon-row">
+          <span class="name">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${formatMoney(item.default_price)})</span></span>
+          <input type="number" min="0" inputmode="numeric" data-addon-id="${item.id}" value="${addonMap[item.id] || 0}" />
+        </div>`
+        )
+        .join('')
+    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูน้ำ/ขนม — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">บันทึกยอดวันนี้</h1>
+    <div class="card">
+      <div class="field">
+        <label for="f-date">วันที่</label>
+        <input type="date" id="f-date" value="${date}" max="${todayStr()}" />
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>บุฟเฟต์</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label for="f-adult">จำนวนหัวผู้ใหญ่</label>
+          <input type="number" id="f-adult" min="0" inputmode="numeric" value="${entry?.buffet_adult_count ?? 0}" />
+        </div>
+        <div class="field">
+          <label for="f-child">จำนวนหัวเด็ก</label>
+          <input type="number" id="f-child" min="0" inputmode="numeric" value="${entry?.buffet_child_count ?? 0}" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>แยกจาน / กลับบ้าน</h2>
+      <div class="field">
+        <label for="f-ala">ยอดขายแยกจาน (บาท)</label>
+        <input type="number" id="f-ala" min="0" inputmode="decimal" value="${entry?.ala_carte_total ?? 0}" />
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="f-takeaway-total">ยอดขายกลับบ้าน (บาท)</label>
+          <input type="number" id="f-takeaway-total" min="0" inputmode="decimal" value="${entry?.takeaway_total ?? 0}" />
+        </div>
+        <div class="field">
+          <label for="f-takeaway-count">จำนวนบิลกลับบ้าน</label>
+          <input type="number" id="f-takeaway-count" min="0" inputmode="numeric" value="${entry?.takeaway_count ?? 0}" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>น้ำ / ขนม (ระบุจำนวนที่ขายได้)</h2>
+      ${addonRowsHtml}
+    </div>
+
+    <div class="card">
+      <div class="field" style="margin-bottom:0">
+        <label for="f-note">โน้ต (ถ้ามี)</label>
+        <textarea id="f-note" rows="2">${escapeHtml(entry?.note || '')}</textarea>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-save-entry">บันทึกยอดวันนี้</button>
+    <div id="entry-result" style="margin-top:16px;"></div>
+  `;
+
+  document.getElementById('f-date').addEventListener('change', (e) => renderEntry(e.target.value));
+
+  document.getElementById('btn-save-entry').addEventListener('click', async () => {
+    const targetDate = document.getElementById('f-date').value;
+    try {
+      await upsertDailyEntry({
+        entry_date: targetDate,
+        buffet_adult_count: Number(document.getElementById('f-adult').value) || 0,
+        buffet_child_count: Number(document.getElementById('f-child').value) || 0,
+        ala_carte_total: Number(document.getElementById('f-ala').value) || 0,
+        takeaway_total: Number(document.getElementById('f-takeaway-total').value) || 0,
+        takeaway_count: Number(document.getElementById('f-takeaway-count').value) || 0,
+        note: document.getElementById('f-note').value || null,
+        recorded_by: (await listShifts())[0]?.id ?? null,
+      });
+
+      const addonInputs = document.querySelectorAll('[data-addon-id]');
+      for (const input of addonInputs) {
+        await recordAddonSale({
+          entry_date: targetDate,
+          menu_item_id: input.dataset.addonId,
+          quantity: Number(input.value) || 0,
+        });
+      }
+
+      const summary = await db.daily_summary.where('summary_date').equals(targetDate).first();
+      document.getElementById('entry-result').innerHTML = summary
+        ? `<div class="card">
+             <h2>สรุปวันที่ ${targetDate}</h2>
+             <div class="row-list">
+               <div class="row-item"><span class="label">ยอดขายรวม</span><span class="value">${formatMoney(summary.sales_buffet + summary.sales_ala_carte + summary.sales_takeaway + summary.sales_addon)}</span></div>
+               <div class="row-item"><span class="label">ต้นทุนวัตถุดิบ (COGS)</span><span class="value">${formatMoney(summary.cogs)}</span></div>
+               <div class="row-item"><span class="label">ค่าถุง</span><span class="value">${formatMoney(summary.packaging_cost)}</span></div>
+               <div class="row-item"><span class="label">ค่าใช้จ่ายประจำ (เฉลี่ย/วัน)</span><span class="value">${formatMoney(summary.operating_expense)}</span></div>
+               <div class="row-item"><span class="label">กำไรสุทธิ</span><span class="value ${summary.net_profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(summary.net_profit)}</span></div>
+             </div>
+           </div>`
+        : '';
+
+      showToast('บันทึกสำเร็จ');
+      renderHeader();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+      console.error(err);
+    }
+  });
+}
+
+// ------------------------------------------------------------
+// View: ตั้งค่าเมนู (buffet packages + menu items)
+// ------------------------------------------------------------
+async function renderMenuSettings() {
+  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
+  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
+  const packagingFee = await getSetting('default_packaging_fee', 0);
+  const categories = await listMenuCategories({ activeOnly: true });
+  const items = await listMenuItems({ activeOnly: true });
+
+  const categoryOptions = categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+
+  const itemsHtml = items.length
+    ? items
+        .map(
+          (item) => `
+        <div class="row-item">
+          <span class="label">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${item.item_type === 'addon' ? 'น้ำ/ขนม' : item.item_type === 'dish' ? 'จานเดี่ยว' : 'บรรจุภัณฑ์'})</span></span>
+          <span class="value">${formatMoney(item.default_price)}
+            <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
+          </span>
+        </div>`
+        )
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีเมนู เพิ่มเมนูแรกด้านล่างได้เลย</p></div>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">ตั้งค่าเมนู</h1>
+
+    <div class="card">
+      <h2>ราคาบุฟเฟต์</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">แก้ราคาแล้วจะมีผลกับ "การบันทึกยอดวันใหม่" เท่านั้น ยอดของวันที่บันทึกไปแล้วจะไม่เปลี่ยนตาม</p>
+      <div class="field-grid">
+        <div class="field">
+          <label for="f-adult-price">ราคาผู้ใหญ่ (บาท)</label>
+          <input type="number" id="f-adult-price" min="0" value="${adultPkg?.price ?? 0}" />
+        </div>
+        <div class="field">
+          <label for="f-child-price">ราคาเด็ก (บาท)</label>
+          <input type="number" id="f-child-price" min="0" value="${childPkg?.price ?? 0}" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-packaging-fee">ค่าถุง/ยางรัด ต่อบิลกลับบ้าน (บาท)</label>
+        <input type="number" id="f-packaging-fee" min="0" value="${packagingFee}" />
+      </div>
+      <button class="btn btn-primary" id="btn-save-prices">บันทึกราคา</button>
+    </div>
+
+    <div class="card">
+      <h2>รายการเมนู</h2>
+      <div class="row-list">${itemsHtml}</div>
+    </div>
+
+    <div class="card">
+      <h2>เพิ่มเมนูใหม่</h2>
+      <div class="field">
+        <label for="f-item-name">ชื่อเมนู</label>
+        <input type="text" id="f-item-name" placeholder="เช่น โค้ก, มันฝรั่งทอด" />
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="f-item-price">ราคา (บาท)</label>
+          <input type="number" id="f-item-price" min="0" />
+        </div>
+        <div class="field">
+          <label for="f-item-category">หมวดหมู่</label>
+          <select id="f-item-category">${categoryOptions}</select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-item-type">ประเภท</label>
+        <select id="f-item-type">
+          <option value="addon">น้ำ/ขนม (นับจำนวนขายรายวัน)</option>
+          <option value="dish">จานเดี่ยว (รวมในยอดแยกจาน)</option>
+        </select>
+      </div>
+      <button class="btn btn-ghost" id="btn-add-item">+ เพิ่มเมนู</button>
+    </div>
+  `;
+
+  document.getElementById('btn-save-prices').addEventListener('click', async () => {
+    try {
+      if (adultPkg) await updateBuffetPackage(adultPkg.id, { price: Number(document.getElementById('f-adult-price').value) || 0 });
+      if (childPkg) await updateBuffetPackage(childPkg.id, { price: Number(document.getElementById('f-child-price').value) || 0 });
+      await setSetting('default_packaging_fee', Number(document.getElementById('f-packaging-fee').value) || 0);
+      showToast('บันทึกราคาสำเร็จ');
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.getElementById('btn-add-item').addEventListener('click', async () => {
+    const name = document.getElementById('f-item-name').value.trim();
+    if (!name) { showToast('กรุณาใส่ชื่อเมนู'); return; }
+    try {
+      await createMenuItem({
+        category_id: document.getElementById('f-item-category').value,
+        name,
+        default_price: Number(document.getElementById('f-item-price').value) || 0,
+        item_type: document.getElementById('f-item-type').value,
+      });
+      showToast('เพิ่มเมนูสำเร็จ');
+      renderMenuSettings();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-item]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const result = await removeMenuItem(btn.dataset.removeItem);
+      showToast(result.deleted ? 'ลบเมนูสำเร็จ' : 'ซ่อนเมนูแล้ว (เคยมีประวัติขายอยู่ ลบจริงไม่ได้)');
+      renderMenuSettings();
+    });
+  });
+}
+
+// ------------------------------------------------------------
+// View: เพิ่มเติม (placeholder — โมดูลถัดไป)
+// ------------------------------------------------------------
+async function renderMore() {
+  $content.innerHTML = `
+    <h1 class="section-title">เพิ่มเติม</h1>
+    <div class="card">
+      <div class="row-list">
+        <div class="row-item" style="cursor:pointer;" data-goto-sub="ingredients">
+          <span class="label" style="font-weight:700;color:var(--ink);">วัตถุดิบ / สต็อก</span>
+          <span class="value" style="color:var(--terracotta-deep);">เปิด →</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="empty-state">
+        <p>การเงิน / รายงาน</p>
+        <p>กำลังจะมาในเวอร์ชันถัดไป</p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>สำรองข้อมูล</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">ย้ายข้อมูลทั้งหมดไปเครื่องอื่น หรือสำรองไว้กันข้อมูลหาย</p>
+      <button class="btn btn-ghost" id="btn-export" style="margin-bottom:10px;">ดาวน์โหลดไฟล์สำรองข้อมูล</button>
+      <label for="import-file" class="btn btn-primary" style="text-align:center; display:block;">นำเข้าไฟล์สำรองข้อมูล</label>
+      <input type="file" id="import-file" accept="application/json" style="display:none;" />
+    </div>
+  `;
+
+  document.querySelectorAll('[data-goto-sub]').forEach((el) => {
+    el.addEventListener('click', () => navigate(el.dataset.gotoSub));
+  });
+
+  document.getElementById('btn-export').addEventListener('click', async () => {
+    const data = await exportAllData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tuadueng-backup-${todayStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!confirm('การนำเข้าจะลบข้อมูลปัจจุบันทั้งหมดแล้วแทนที่ด้วยไฟล์นี้ ยืนยันหรือไม่?')) return;
+    try {
+      const text = await file.text();
+      await importAllData(JSON.parse(text));
+      showToast('นำเข้าข้อมูลสำเร็จ');
+      renderHeader();
+      navigate('dashboard');
+    } catch (err) {
+      showToast('นำเข้าไม่สำเร็จ: ' + err.message);
+    }
+  });
+}
+
+// ------------------------------------------------------------
+// View: วัตถุดิบ / สต็อก (Ingredients)
+// ------------------------------------------------------------
+async function renderIngredients() {
+  const ingredients = await listIngredients({ activeOnly: true });
+  const lowStock = new Set((await listLowStockIngredients()).map((i) => i.id));
+  const overdueList = await listOverdueStockCounts();
+  const overdueMap = Object.fromEntries(overdueList.map((o) => [o.ingredient.id, o.reason]));
+  const today = todayStr();
+
+  const cardsHtml = ingredients.length
+    ? ingredients
+        .map((ing) => {
+          const stamps = [];
+          if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
+          if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
+          if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
+
+          return `
+        <div class="card" data-ingredient-card="${ing.id}">
+          <div class="row-item" style="border-bottom:none; padding-top:0;">
+            <span class="label" style="font-weight:700; color:var(--ink); font-size:15px;">${escapeHtml(ing.name)}</span>
+            <button class="btn-danger-text" data-remove-ingredient="${ing.id}">ลบ</button>
+          </div>
+          <div style="margin-bottom:10px;">${stamps.join(' ')}</div>
+          <div class="row-item">
+            <span class="label">คงเหลือ</span>
+            <span class="value">${ing.current_stock} ${escapeHtml(ing.unit)}</span>
+          </div>
+          <div class="row-item">
+            <span class="label">ต้นทุนเฉลี่ย/หน่วย</span>
+            <span class="value">${formatMoney(ing.current_avg_cost)}</span>
+          </div>
+
+          <h3 style="margin-top:14px;">บันทึกซื้อเข้า</h3>
+          <div class="field-grid">
+            <div class="field">
+              <label>จำนวน (${escapeHtml(ing.unit)})</label>
+              <input type="number" min="0" step="any" data-purchase-qty="${ing.id}" />
+            </div>
+            <div class="field">
+              <label>ราคา/หน่วย (บาท)</label>
+              <input type="number" min="0" step="any" data-purchase-cost="${ing.id}" />
+            </div>
+          </div>
+          <input type="date" data-purchase-date="${ing.id}" value="${today}" style="margin-bottom:10px;" />
+          <button class="btn btn-ghost btn-small" data-save-purchase="${ing.id}">บันทึกซื้อเข้า</button>
+
+          <h3 style="margin-top:16px;">นับสต็อกปิดร้าน</h3>
+          <div class="field-grid">
+            <div class="field">
+              <label>จำนวนที่นับได้ (${escapeHtml(ing.unit)})</label>
+              <input type="number" min="0" step="any" data-count-closing="${ing.id}" />
+            </div>
+            <div class="field">
+              <label>วันที่นับ</label>
+              <input type="date" data-count-date="${ing.id}" value="${today}" />
+            </div>
+          </div>
+          <button class="btn btn-primary btn-small" data-save-count="${ing.id}">บันทึกนับสต็อก</button>
+          <div data-count-result="${ing.id}" style="margin-top:8px; font-size:13px; color:var(--ink-soft);"></div>
+        </div>`;
+        })
+        .join('')
+    : `<div class="card"><div class="empty-state"><p>ยังไม่มีวัตถุดิบ</p><p>เพิ่มรายการแรกด้านล่างได้เลย</p></div></div>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">วัตถุดิบ / สต็อก</h1>
+    ${cardsHtml}
+    <div class="card">
+      <h2>เพิ่มวัตถุดิบใหม่</h2>
+      <div class="field">
+        <label for="ing-name">ชื่อวัตถุดิบ</label>
+        <input type="text" id="ing-name" placeholder="เช่น ไก่, เส้นก๋วยเตี๋ยว" />
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="ing-unit">หน่วยนับ</label>
+          <input type="text" id="ing-unit" placeholder="กก., ขวด, ถุง" />
+        </div>
+        <div class="field">
+          <label for="ing-reorder">จุดสั่งซื้อ (ใกล้หมดเมื่อเหลือน้อยกว่านี้)</label>
+          <input type="number" id="ing-reorder" min="0" value="0" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="ing-frequency">ความถี่การนับสต็อก</label>
+        <select id="ing-frequency">
+          <option value="daily">นับทุกวัน</option>
+          <option value="weekly">นับทุกสัปดาห์</option>
+        </select>
+      </div>
+      <button class="btn btn-ghost" id="btn-add-ingredient">+ เพิ่มวัตถุดิบ</button>
+    </div>
+  `;
+
+  document.getElementById('btn-add-ingredient').addEventListener('click', async () => {
+    const name = document.getElementById('ing-name').value.trim();
+    const unit = document.getElementById('ing-unit').value.trim();
+    if (!name || !unit) { showToast('กรุณาใส่ชื่อและหน่วยนับ'); return; }
+    try {
+      await createIngredient({
+        name,
+        unit,
+        reorder_point: Number(document.getElementById('ing-reorder').value) || 0,
+        count_frequency: document.getElementById('ing-frequency').value,
+      });
+      showToast('เพิ่มวัตถุดิบสำเร็จ');
+      renderIngredients();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-ingredient]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const result = await removeIngredient(btn.dataset.removeIngredient);
+      showToast(result.deleted ? 'ลบวัตถุดิบสำเร็จ' : 'ซ่อนวัตถุดิบแล้ว (มีประวัติซื้อ/นับอยู่ ลบจริงไม่ได้)');
+      renderIngredients();
+    });
+  });
+
+  document.querySelectorAll('[data-save-purchase]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.savePurchase;
+      const qty = Number(document.querySelector(`[data-purchase-qty="${id}"]`).value) || 0;
+      const cost = Number(document.querySelector(`[data-purchase-cost="${id}"]`).value) || 0;
+      const date = document.querySelector(`[data-purchase-date="${id}"]`).value;
+      if (qty <= 0) { showToast('กรุณาใส่จำนวนที่ซื้อ'); return; }
+      try {
+        await recordPurchase({ ingredient_id: id, purchase_date: date, quantity: qty, unit_cost: cost });
+        showToast('บันทึกซื้อเข้าสำเร็จ');
+        renderIngredients();
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-save-count]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.saveCount;
+      const closing = Number(document.querySelector(`[data-count-closing="${id}"]`).value) || 0;
+      const date = document.querySelector(`[data-count-date="${id}"]`).value;
+      try {
+        const result = await recordStockCount({ ingredient_id: id, count_date: date, closing_count: closing });
+        document.querySelector(`[data-count-result="${id}"]`).textContent =
+          `ใช้ไป ${result.used_qty} หน่วย มูลค่า ${formatMoney(result.used_value)}`;
+        showToast('บันทึกนับสต็อกสำเร็จ');
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
+}
+
+// ------------------------------------------------------------
+// Router
+// ------------------------------------------------------------
+const views = { dashboard: renderDashboard, entry: () => renderEntry(), menu: renderMenuSettings, more: renderMore, ingredients: renderIngredients };
+const navHighlightFor = { ingredients: 'more' };
+
+async function navigate(viewName) {
+  const highlightAs = navHighlightFor[viewName] || viewName;
+  $nav.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.view === highlightAs));
+  await views[viewName]();
+  window.scrollTo(0, 0);
+}
+
+$nav.querySelectorAll('button').forEach((btn) => {
+  btn.addEventListener('click', () => navigate(btn.dataset.view));
+});
+
+// ------------------------------------------------------------
+// Service worker registration
+// ------------------------------------------------------------
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW register failed:', err));
+}
+
+// เผื่อ debug ผ่าน browser devtools console (เช่น window.__app.db.daily_entries.toArray())
+window.__app = { db, getSetting, setSetting };
+
+// ------------------------------------------------------------
+// Boot
+// ------------------------------------------------------------
+(async function boot() {
+  try {
+    await bootstrapDefaults();
+    await renderHeader();
+    await navigate('dashboard');
+  } catch (err) {
+    $content.innerHTML = `<div class="card"><p>เกิดข้อผิดพลาดตอนเปิดแอป: ${escapeHtml(err.message)}</p></div>`;
+    console.error(err);
+  }
+})();
+
+
+</script>
 </body>
 </html>

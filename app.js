@@ -47,29 +47,68 @@ const Router = {
     }
   },
   render(page, sub) {
-    if (page === 'home') renderHome();
-    if (page === 'sales') renderSales();
+    let job = () => {};
+    if (page === 'home') job = renderHome;
+    if (page === 'sales') job = renderSales;
     if (page === 'stock') {
       const s = sub || this.currentSub.stock || 'menu';
-      if (s === 'menu') renderStockMenu();
-      if (s === 'receive') renderStockReceive();
-      if (s === 'count') renderStockCount();
-      if (s === 'materials') renderStockMaterials();
+      if (s === 'menu') job = renderStockMenu;
+      if (s === 'receive') job = renderStockReceive;
+      if (s === 'count') job = renderStockCount;
+      if (s === 'materials') job = renderStockMaterials;
     }
-    if (page === 'reports') renderReports();
+    if (page === 'reports') job = renderReports;
     if (page === 'accounting') {
       const s = sub || this.currentSub.accounting || 'expense';
-      if (s === 'expense') renderExpenseList();
-      if (s === 'pl') { /* wait for user to pick range */ }
+      if (s === 'expense') job = renderExpenseList;
     }
+    Promise.resolve().then(job).catch(err => {
+      console.error(err);
+      toast('โหลดข้อมูลไม่สำเร็จ — ตรวจสอบว่าเปิดแอปผ่านเว็บ ไม่ใช่ดับเบิลคลิกไฟล์โดยตรง');
+    });
   }
 };
 
 // ================= Init =================
-document.addEventListener('DOMContentLoaded', async () => {
-  await seedIfEmpty();
+document.addEventListener('DOMContentLoaded', () => {
+  // ผูกปุ่ม/เมนูทั้งหมดก่อนเป็นอันดับแรก เพื่อให้กดใช้งานได้เสมอ
+  // ต่อให้ขั้นตอนเชื่อมฐานข้อมูลด้านล่างจะมีปัญหาก็ตาม
+  bindAllControls();
   document.getElementById('headerDate').textContent = new Date().toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  Router.go('home'); // แสดงหน้าจอทันที ไม่ต้องรอฐานข้อมูล
+  initDatabase();
+});
+
+async function initDatabase() {
+  try {
+    if (!window.indexedDB) throw new Error('no-indexeddb');
+    await seedIfEmpty();
+    renderHome(); // เติมข้อมูลจริงหลังฐานข้อมูลพร้อมแล้ว
+  } catch (err) {
+    console.error(err);
+    showDbErrorBanner();
+  }
+}
+
+function showDbErrorBanner() {
+  const main = document.querySelector('main');
+  const banner = document.createElement('section');
+  banner.className = 'card accent-maroon';
+  banner.style.borderColor = '#B23B3B';
+  banner.innerHTML = `
+    <h2>ไม่สามารถเชื่อมต่อฐานข้อมูลในเครื่องได้</h2>
+    <p class="helper-text">สาเหตุที่พบบ่อยที่สุดคือเปิดไฟล์นี้แบบดับเบิลคลิกโดยตรง (URL ขึ้นต้นด้วย <code>file://</code>) ซึ่งเบราว์เซอร์บางตัวบล็อกไม่ให้บันทึกข้อมูลในเครื่อง</p>
+    <p class="helper-text"><strong>วิธีแก้:</strong> ให้เปิดแอปผ่านเว็บจริง เช่น ลากทั้งโฟลเดอร์ไปวางที่ <strong>https://app.netlify.com/drop</strong> แล้วเปิดลิงก์ที่ได้แทน (ดูขั้นตอนเต็มใน README.md)</p>
+  `;
+  main.prepend(banner);
+}
+
+function bindAllControls() {
   document.querySelectorAll('nav.bottomnav button').forEach(b => {
     b.addEventListener('click', () => Router.go(b.dataset.page));
   });
@@ -120,13 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('reportFrom').addEventListener('change', renderReports);
   document.getElementById('reportTo').addEventListener('change', renderReports);
-
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
-
-  Router.go('home');
-});
+}
 
 // ================= หน้าแรก =================
 async function renderHome() {

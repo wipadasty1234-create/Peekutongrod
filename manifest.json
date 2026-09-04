@@ -1,11 +1,11 @@
 {
-  "name": "ตัวตัง ก๋วยเตี๋ยวไก่บุฟเฟต์ - หลังร้าน",
-  "short_name": "ตัวตัง หลังร้าน",
+  "name": "ตัวตึง ก๋วยเตี๋ยวไก่บุฟเฟต์ - หลังร้าน",
+  "short_name": "ตัวตึง หลังร้าน",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#FAF6EF",
-  "theme_color": "#8C2F2F",
+  "theme_color": "#B5502C",
   "orientation": "portrait",
   "icons": [
     { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }

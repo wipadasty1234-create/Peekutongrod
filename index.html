@@ -3,32 +3,39 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#BC5A34" />
+<meta name="theme-color" content="#241C15" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <title>ตัวตึงก๋วยเตี๋ยวไก่มะระ บุฟเฟต์</title>
 <style>
   :root {
-    --cream: #F3E9D8;
-    --cream-deep: #EADFC8;
-    --terracotta: #BC5A34;
-    --terracotta-deep: #8F3F22;
-    --ink: #2E2117;
-    --ink-soft: #6B5C4C;
-    --herb: #5C6B41;
-    --herb-bg: #E7EADB;
-    --line: #D8C4A5;
-    --white: #FFFDF9;
-    --radius: 14px;
+    --paper: #F1ECDE;
+    --paper-deep: #E6DDC5;
+    --ink: #241C15;
+    --ink-soft: #6E6252;
+    --ember: #8C3B26;
+    --ember-deep: #5E2718;
+    --moss: #4B5A3A;
+    --moss-bg: #E4E6DA;
+    --ember-bg: #EFDCCD;
+    --brass: #A9803A;
+    --line: #D9CDB2;
+    --white: #FFFDF8;
+    --radius: 8px;
+    --font-display: "Noto Serif Thai", "Noto Serif", Georgia, serif;
+    --font-body: "IBM Plex Sans Thai", "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", "Leelawadee UI", "PingFang TC", Roboto, sans-serif;
   }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
 
   body {
-    background: var(--cream);
+    background: var(--paper);
     color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", "Leelawadee UI", "PingFang TC", Roboto, sans-serif;
+    font-family: var(--font-body);
     font-size: 16px;
     line-height: 1.5;
     padding-bottom: 84px; /* เผื่อ bottom nav */
@@ -37,51 +44,46 @@
 
   button, input, select, textarea { font-family: inherit; font-size: inherit; }
 
-  h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
+  h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: 0; }
 
-  /* ---------------- App bar / ตั๋วสรุปยอด ---------------- */
+  /* ---------------- App bar / สรุปยอดวันนี้ ---------------- */
   .ticket {
     position: relative;
-    background: var(--terracotta);
-    color: var(--white);
-    padding: 20px 20px 28px;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 22px 20px 20px;
     margin-bottom: 24px;
+    border-bottom: 3px solid var(--brass);
   }
-  .ticket::after {
-    content: "";
-    position: absolute;
-    left: 0; right: 0; bottom: -1px; height: 16px;
-    background: radial-gradient(circle at 8px 8px, transparent 8px, var(--cream) 8px) 0 -8px / 16px 16px repeat-x;
-  }
-  .ticket-eyebrow { font-size: 13px; opacity: 0.85; margin-bottom: 2px; }
-  .ticket-date { font-size: 20px; font-weight: 700; margin-bottom: 14px; }
-  .ticket-stat-label { font-size: 13px; opacity: 0.85; }
+  .ticket-eyebrow { font-size: 13px; color: var(--brass); font-weight: 600; margin-bottom: 3px; }
+  .ticket-date { font-family: var(--font-display); font-size: 19px; font-weight: 600; margin-bottom: 16px; color: var(--paper); }
+  .ticket-stat-label { font-size: 13px; color: #C9BFA9; }
   .ticket-stat-value {
-    font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums;
-    line-height: 1.1;
+    font-family: var(--font-display); font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums;
+    line-height: 1.15; color: var(--paper);
   }
-  .ticket-stat-value.pending { font-size: 17px; font-weight: 600; opacity: 0.95; }
+  .ticket-stat-value.pending { font-size: 16px; font-weight: 500; font-family: var(--font-body); color: #C9BFA9; }
   .ticket-cta {
-    display: inline-block; margin-top: 12px;
-    background: var(--white); color: var(--terracotta-deep);
-    border: none; border-radius: 999px; padding: 10px 18px;
+    display: inline-block; margin-top: 14px;
+    background: var(--brass); color: var(--ink);
+    border: none; border-radius: 6px; padding: 11px 20px;
     font-weight: 700; font-size: 14px; cursor: pointer;
   }
 
   main { max-width: 560px; margin: 0 auto; padding: 0 16px; }
 
-  /* ---------------- ป้ายสถานะทรงตราปั๊ม ---------------- */
+  /* ---------------- ป้ายสถานะ ---------------- */
   .stamp {
     display: inline-flex; align-items: center; gap: 6px;
-    border: 1.5px dashed currentColor; border-radius: 999px;
-    padding: 5px 12px; font-size: 13px; font-weight: 700;
+    border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; font-weight: 600;
   }
-  .stamp.warn { color: var(--terracotta-deep); background: #F6E3D3; }
-  .stamp.ok { color: var(--herb); background: var(--herb-bg); }
+  .stamp.warn { color: var(--ember-deep); background: var(--ember-bg); }
+  .stamp.ok { color: var(--moss); background: var(--moss-bg); }
 
   .alert-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
 
-  /* ---------------- การ์ดข้อมูล (ไม่มนเท่ากันทุกใบ ตั้งใจให้ต่างจาก ticket) ---------------- */
+  /* ---------------- การ์ดข้อมูล ---------------- */
   .card {
     background: var(--white);
     border: 1px solid var(--line);
@@ -89,56 +91,79 @@
     padding: 16px;
     margin-bottom: 16px;
   }
-  .card h2 { font-size: 16px; margin-bottom: 12px; }
-  .card h3 { font-size: 14px; color: var(--ink-soft); margin-bottom: 8px; font-weight: 700; }
+  .card h2 { font-size: 17px; margin-bottom: 16px; padding-bottom: 10px; position: relative; }
+  .card h2::after {
+    content: ""; position: absolute; left: 0; bottom: 0; width: 28px; height: 2px; background: var(--brass);
+  }
+  .card h3 { font-size: 14px; color: var(--ink-soft); margin-bottom: 8px; font-weight: 600; font-family: var(--font-body); }
 
   .row-list { display: flex; flex-direction: column; }
   .row-item {
     display: flex; justify-content: space-between; align-items: baseline;
-    padding: 10px 0; border-bottom: 1px dashed var(--line);
+    padding: 10px 0; border-bottom: 1px solid var(--line);
   }
   .row-item:last-child { border-bottom: none; }
   .row-item .label { color: var(--ink-soft); font-size: 14px; }
   .row-item .value { font-weight: 700; font-variant-numeric: tabular-nums; }
-  .row-item .value.profit-pos { color: var(--herb); }
-  .row-item .value.profit-neg { color: var(--terracotta-deep); }
+  .row-item .value.profit-pos { color: var(--moss); }
+  .row-item .value.profit-neg { color: var(--ember-deep); }
 
   .empty-state { text-align: center; padding: 28px 16px; color: var(--ink-soft); }
   .empty-state p { margin: 4px 0; }
 
-  /* ---------------- ฟอร์ม ---------------- */
-  label { display: block; font-size: 13px; font-weight: 700; color: var(--ink-soft); margin-bottom: 6px; }
-  .field { margin-bottom: 14px; }
-  input[type="text"], input[type="number"], input[type="date"], select, textarea {
+  /* ---------------- ฟอร์ม: ช่องกรอกแบบเส้นใต้ (สมุดบัญชี) ---------------- */
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }
+  .field { margin-bottom: 18px; }
+  input[type="text"], input[type="number"], input[type="date"], select {
+    width: 100%; padding: 9px 2px;
+    border: none; border-bottom: 1.5px solid var(--line); border-radius: 0;
+    background: transparent; color: var(--ink);
+  }
+  textarea {
     width: 100%; padding: 11px 12px;
-    border: 1.5px solid var(--line); border-radius: 10px;
-    background: var(--white); color: var(--ink);
+    border: 1.5px solid var(--line); border-radius: 6px;
+    background: var(--white); color: var(--ink); resize: vertical;
   }
-  input:focus, select:focus, textarea:focus {
-    outline: 2px solid var(--terracotta); outline-offset: 1px; border-color: var(--terracotta);
+  select {
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236E6252' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 2px center; background-size: 16px;
+    padding-right: 22px;
   }
-  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus, select:focus {
+    outline: none; border-bottom: 2px solid var(--ember);
+  }
+  textarea:focus {
+    outline: 2px solid var(--brass); outline-offset: 1px; border-color: var(--brass);
+  }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; }
 
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    border: none; border-radius: 10px; padding: 13px 18px;
+    border: none; border-radius: 6px; padding: 13px 18px;
     font-weight: 700; cursor: pointer; width: 100%;
   }
-  .btn-primary { background: var(--terracotta); color: var(--white); }
-  .btn-primary:active { background: var(--terracotta-deep); }
-  .btn-ghost { background: transparent; color: var(--terracotta-deep); border: 1.5px solid var(--terracotta); }
-  .btn-danger-text { background: none; border: none; color: var(--terracotta-deep); font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px; }
+  .btn-primary { background: var(--ember); color: var(--white); }
+  .btn-primary:active { background: var(--ember-deep); }
+  .btn-ghost { background: transparent; color: var(--ember-deep); border: 1.5px solid var(--ember); }
+  .btn-danger-text { background: none; border: none; color: var(--ember-deep); font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px; }
   .btn-small { width: auto; padding: 8px 14px; font-size: 14px; }
 
-  .addon-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px dashed var(--line); gap: 12px; }
+  .addon-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); gap: 12px; }
   .addon-row:last-child { border-bottom: none; }
   .addon-row .name { font-size: 14px; flex: 1; }
-  .addon-row input { width: 70px; text-align: center; padding: 8px; }
+  .addon-row input {
+    width: 64px; text-align: center; padding: 8px;
+    border: 1.5px solid var(--line); border-radius: 6px; background: var(--white);
+  }
+  .addon-row input:focus {
+    outline: none; border-color: var(--ember); border-bottom: 1.5px solid var(--ember);
+  }
 
   .toast {
     position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
-    background: var(--ink); color: var(--white); padding: 10px 18px;
-    border-radius: 999px; font-size: 14px; font-weight: 600;
+    background: var(--ink); color: var(--paper); padding: 10px 18px;
+    border-radius: 6px; font-size: 14px; font-weight: 500;
     opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
     max-width: 90vw; text-align: center; z-index: 50;
   }
@@ -152,17 +177,20 @@
     z-index: 40;
   }
   nav.bottom-nav button {
-    flex: 1; background: none; border: none; cursor: pointer;
+    flex: 1; background: none; border: none; cursor: pointer; position: relative;
     display: flex; flex-direction: column; align-items: center; gap: 3px;
-    padding: 8px 2px; color: var(--ink-soft); font-size: 11px; font-weight: 700;
-    border-radius: 10px;
+    padding: 8px 2px; color: var(--ink-soft); font-size: 11px; font-weight: 600;
   }
-  nav.bottom-nav button.active { color: var(--terracotta-deep); background: var(--cream-deep); }
+  nav.bottom-nav button.active { color: var(--ember-deep); }
+  nav.bottom-nav button.active::before {
+    content: ""; position: absolute; top: -6px; left: 28%; right: 28%; height: 2px;
+    background: var(--ember); border-radius: 2px;
+  }
   nav.bottom-nav svg { width: 22px; height: 22px; }
 
-  .section-title { font-size: 20px; font-weight: 800; margin: 4px 0 16px; }
+  .section-title { font-family: var(--font-display); font-size: 21px; font-weight: 600; margin: 4px 0 16px; color: var(--ink); }
 
-  a { color: var(--terracotta-deep); }
+  a { color: var(--ember-deep); }
 
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
@@ -188,6 +216,10 @@
   <button data-view="menu">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
     ตั้งค่าเมนู
+  </button>
+  <button data-view="ingredients">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3z"/><path d="M5 7v13h14V7"/><path d="M9 12h6"/></svg>
+    วัตถุดิบ
   </button>
   <button data-view="more">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
@@ -407,8 +439,8 @@ async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by
 
   const menuItem = await db.menu_items.get(menu_item_id);
   if (!menuItem) throw new Error(`ไม่พบ menu_item_id: ${menu_item_id}`);
-  if (menuItem.item_type !== 'addon') {
-    throw new Error(`menu_item "${menuItem.name}" ไม่ใช่ item_type='addon'`);
+  if (menuItem.item_type !== 'addon' && menuItem.item_type !== 'dish') {
+    throw new Error(`menu_item "${menuItem.name}" ต้องเป็น item_type='addon' หรือ 'dish' เท่านั้น`);
   }
 
   return db.transaction('rw', db.daily_entries, db.daily_addon_sales, db.daily_entry_edit_logs, async () => {
@@ -627,13 +659,25 @@ async function generateDailySummary(summary_date) {
   // ไม่มี daily_entries = วันแบบ estimated (กรอกมือ) → ไม่แตะ ปล่อยให้ผู้ใช้กรอกเอง
   if (!entry) return null;
 
-  const addons = await db.daily_addon_sales.where('entry_date').equals(summary_date).toArray();
-  const sales_addon = addons.reduce((sum, a) => sum + a.subtotal, 0);
+  // แยกยอดขายจาก daily_addon_sales ตาม item_type ของเมนู: 'addon' (น้ำ/ขนม) กับ 'dish' (แยกจาน)
+  const addonRows = await db.daily_addon_sales.where('entry_date').equals(summary_date).toArray();
+  let sales_addon = 0;
+  let sales_ala_carte_from_dishes = 0;
+  for (const row of addonRows) {
+    const menuItem = await db.menu_items.get(row.menu_item_id);
+    if (menuItem?.item_type === 'dish') {
+      sales_ala_carte_from_dishes += row.subtotal;
+    } else {
+      sales_addon += row.subtotal;
+    }
+  }
 
   const sales_buffet =
     entry.buffet_adult_count * entry.buffet_adult_price_snapshot +
     entry.buffet_child_count * entry.buffet_child_price_snapshot;
-  const sales_ala_carte = entry.ala_carte_total;
+  // ยอดแยกจานตอนนี้มาจากจำนวนเมนู 'dish' ที่บันทึกไว้ — ถ้ายังไม่มีรายการ dish เลย
+  // ให้ fallback ไปใช้ ala_carte_total เดิม เพื่อไม่ให้ข้อมูลเก่าก่อนแก้ฟีเจอร์นี้หายไป
+  const sales_ala_carte = sales_ala_carte_from_dishes > 0 ? sales_ala_carte_from_dishes : (entry.ala_carte_total || 0);
   const sales_takeaway = entry.takeaway_total;
 
   // COGS = รวม used_value ของวัตถุดิบที่นับสต็อก "ตรงวันนี้พอดี"
@@ -927,6 +971,15 @@ async function listOverdueStockCounts(checkDate = new Date().toISOString().slice
     }
   }
   return overdue;
+}
+
+/** วัตถุดิบที่ "ยังไม่มีการนับสต็อกในวันที่ระบุ" (default = วันนี้) — นับตรงตัวไม่สนใจ count_frequency
+ *  ต่างจาก listOverdueStockCounts ตรงที่ตัวนี้ไม่สน daily/weekly เอาแค่ "วันนี้นับหรือยัง" */
+async function listIngredientsUncountedToday(checkDate = new Date().toISOString().slice(0, 10)) {
+  const activeIngredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
+  const countsToday = await db.ingredient_stock_counts.where('count_date').equals(checkDate).toArray();
+  const countedIds = new Set(countsToday.map((c) => c.ingredient_id));
+  return activeIngredients.filter((i) => !countedIds.has(i.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1333,54 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function csvValue(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadTextFile(filename, content, mime = 'text/csv;charset=utf-8;') {
+  const blob = new Blob(['\uFEFF' + content], { type: mime }); // BOM กัน Excel อ่านภาษาไทยเพี้ยน
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** ส่งออกประวัติซื้อวัตถุดิบทุกล็อต (ราคาที่เปลี่ยนไปในแต่ละครั้งที่ซื้อ) เป็น CSV เพื่อเอาไปทำสรุปต่อ */
+async function exportIngredientPurchaseLotsCsv() {
+  const ingredients = await db.ingredients.toArray();
+  const nameById = Object.fromEntries(ingredients.map((i) => [i.id, i.name]));
+  const unitById = Object.fromEntries(ingredients.map((i) => [i.id, i.unit]));
+  const purchases = await db.ingredient_purchases.toArray();
+  purchases.sort(
+    (a, b) =>
+      (nameById[a.ingredient_id] || '').localeCompare(nameById[b.ingredient_id] || '') ||
+      a.purchase_date.localeCompare(b.purchase_date)
+  );
+
+  const header = ['วัตถุดิบ', 'หน่วย', 'วันที่ซื้อ', 'จำนวน', 'ราคา/หน่วย', 'มูลค่ารวม', 'ต้นทุนเฉลี่ยก่อนซื้อ', 'ต้นทุนเฉลี่ยหลังซื้อ'];
+  const lines = [header.map(csvValue).join(',')];
+  for (const p of purchases) {
+    lines.push(
+      [
+        nameById[p.ingredient_id] || '(ไม่พบวัตถุดิบ)',
+        unitById[p.ingredient_id] || '',
+        p.purchase_date,
+        p.quantity,
+        p.unit_cost,
+        p.total_cost,
+        p.avg_cost_before,
+        p.avg_cost_after,
+      ]
+        .map(csvValue)
+        .join(',')
+    );
+  }
+  downloadTextFile(`tuadueng-ingredient-lots-${todayStr()}.csv`, lines.join('\n'));
+}
+
 // ------------------------------------------------------------
 // Bootstrap ข้อมูลเริ่มต้น (ครั้งแรกที่เปิดแอป)
 // ------------------------------------------------------------
@@ -1319,7 +1420,7 @@ async function renderHeader() {
         summary
           ? `<div class="ticket-stat-value">${formatMoney(summary.net_profit)}</div>`
           : `<div class="ticket-stat-value pending">ยังไม่ได้บันทึกยอดวันนี้</div>
-             <button class="ticket-cta" data-goto="entry">บันทึกเลย →</button>`
+             <button class="ticket-cta" data-goto="entry">บันทึกยอดวันนี้</button>`
       }
     </div>
   `;
@@ -1382,21 +1483,41 @@ async function renderDashboard() {
 async function renderEntry(dateStr) {
   const date = dateStr || todayStr();
   const entry = await db.daily_entries.where('entry_date').equals(date).first();
+
+  // ราคาบุฟเฟต์ที่จะใช้แสดงคู่กับจำนวนหัว: ถ้าวันนี้มี entry อยู่แล้วให้ใช้ราคาที่ snapshot ไว้
+  // (ตามหลัก snapshot เดิมของระบบ) ถ้ายังไม่มี entry ให้ใช้ราคาปัจจุบันจากตั้งค่าเมนู
+  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
+  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
+  const adultPrice = entry?.buffet_adult_price_snapshot ?? adultPkg?.price ?? 0;
+  const childPrice = entry?.buffet_child_price_snapshot ?? childPkg?.price ?? 0;
+
   const addonItems = await listMenuItems({ item_type: 'addon', activeOnly: true });
+  const dishItems = await listMenuItems({ item_type: 'dish', activeOnly: true });
   const existingAddons = await db.daily_addon_sales.where('entry_date').equals(date).toArray();
   const addonMap = Object.fromEntries(existingAddons.map((a) => [a.menu_item_id, a.quantity]));
 
-  const addonRowsHtml = addonItems.length
-    ? addonItems
-        .map(
-          (item) => `
+  const buildItemRowsHtml = (items) =>
+    items.length
+      ? items
+          .map(
+            (item) => `
         <div class="addon-row">
           <span class="name">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${formatMoney(item.default_price)})</span></span>
-          <input type="number" min="0" inputmode="numeric" data-addon-id="${item.id}" value="${addonMap[item.id] || 0}" />
+          <input type="number" min="0" inputmode="numeric" data-menu-item-id="${item.id}" value="${addonMap[item.id] || 0}" />
         </div>`
-        )
-        .join('')
+          )
+          .join('')
+      : '';
+
+  const dishRowsHtml = dishItems.length
+    ? buildItemRowsHtml(dishItems)
+    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูแยกจาน — เพิ่มได้ที่ "ตั้งค่าเมนู" (เลือกประเภท "จานเดี่ยว / แยกจาน")</p>`;
+
+  const addonRowsHtml = addonItems.length
+    ? buildItemRowsHtml(addonItems)
     : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูน้ำ/ขนม — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`;
+
+  const buffetSubtotal = (entry?.buffet_adult_count ?? 0) * adultPrice + (entry?.buffet_child_count ?? 0) * childPrice;
 
   $content.innerHTML = `
     <h1 class="section-title">บันทึกยอดวันนี้</h1>
@@ -1411,22 +1532,27 @@ async function renderEntry(dateStr) {
       <h2>บุฟเฟต์</h2>
       <div class="field-grid">
         <div class="field">
-          <label for="f-adult">จำนวนหัวผู้ใหญ่</label>
+          <label for="f-adult">จำนวนหัวผู้ใหญ่ <span style="font-weight:400;color:var(--ink-soft);">(${formatMoney(adultPrice)}/หัว)</span></label>
           <input type="number" id="f-adult" min="0" inputmode="numeric" value="${entry?.buffet_adult_count ?? 0}" />
         </div>
         <div class="field">
-          <label for="f-child">จำนวนหัวเด็ก</label>
+          <label for="f-child">จำนวนหัวเด็ก <span style="font-weight:400;color:var(--ink-soft);">(${formatMoney(childPrice)}/หัว)</span></label>
           <input type="number" id="f-child" min="0" inputmode="numeric" value="${entry?.buffet_child_count ?? 0}" />
         </div>
+      </div>
+      <div class="row-item" style="border-bottom:none;">
+        <span class="label">ยอดบุฟเฟต์รวม</span>
+        <span class="value" id="f-buffet-subtotal">${formatMoney(buffetSubtotal)}</span>
       </div>
     </div>
 
     <div class="card">
-      <h2>แยกจาน / กลับบ้าน</h2>
-      <div class="field">
-        <label for="f-ala">ยอดขายแยกจาน (บาท)</label>
-        <input type="number" id="f-ala" min="0" inputmode="decimal" value="${entry?.ala_carte_total ?? 0}" />
-      </div>
+      <h2>แยกจาน (ระบุจำนวนที่ขายได้)</h2>
+      ${dishRowsHtml}
+    </div>
+
+    <div class="card">
+      <h2>กลับบ้าน</h2>
       <div class="field-grid">
         <div class="field">
           <label for="f-takeaway-total">ยอดขายกลับบ้าน (บาท)</label>
@@ -1457,6 +1583,14 @@ async function renderEntry(dateStr) {
 
   document.getElementById('f-date').addEventListener('change', (e) => renderEntry(e.target.value));
 
+  function recalcBuffetSubtotal() {
+    const adultCount = Number(document.getElementById('f-adult').value) || 0;
+    const childCount = Number(document.getElementById('f-child').value) || 0;
+    document.getElementById('f-buffet-subtotal').textContent = formatMoney(adultCount * adultPrice + childCount * childPrice);
+  }
+  document.getElementById('f-adult').addEventListener('input', recalcBuffetSubtotal);
+  document.getElementById('f-child').addEventListener('input', recalcBuffetSubtotal);
+
   document.getElementById('btn-save-entry').addEventListener('click', async () => {
     const targetDate = document.getElementById('f-date').value;
     try {
@@ -1464,18 +1598,17 @@ async function renderEntry(dateStr) {
         entry_date: targetDate,
         buffet_adult_count: Number(document.getElementById('f-adult').value) || 0,
         buffet_child_count: Number(document.getElementById('f-child').value) || 0,
-        ala_carte_total: Number(document.getElementById('f-ala').value) || 0,
         takeaway_total: Number(document.getElementById('f-takeaway-total').value) || 0,
         takeaway_count: Number(document.getElementById('f-takeaway-count').value) || 0,
         note: document.getElementById('f-note').value || null,
         recorded_by: (await listShifts())[0]?.id ?? null,
       });
 
-      const addonInputs = document.querySelectorAll('[data-addon-id]');
-      for (const input of addonInputs) {
+      const itemInputs = document.querySelectorAll('[data-menu-item-id]');
+      for (const input of itemInputs) {
         await recordAddonSale({
           entry_date: targetDate,
-          menu_item_id: input.dataset.addonId,
+          menu_item_id: input.dataset.menuItemId,
           quantity: Number(input.value) || 0,
         });
       }
@@ -1520,7 +1653,7 @@ async function renderMenuSettings() {
         .map(
           (item) => `
         <div class="row-item">
-          <span class="label">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${item.item_type === 'addon' ? 'น้ำ/ขนม' : item.item_type === 'dish' ? 'จานเดี่ยว' : 'บรรจุภัณฑ์'})</span></span>
+          <span class="label">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${item.item_type === 'addon' ? 'น้ำ/ขนม' : item.item_type === 'dish' ? 'แยกจาน' : 'บรรจุภัณฑ์'})</span></span>
           <span class="value">${formatMoney(item.default_price)}
             <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
           </span>
@@ -1577,7 +1710,7 @@ async function renderMenuSettings() {
         <label for="f-item-type">ประเภท</label>
         <select id="f-item-type">
           <option value="addon">น้ำ/ขนม (นับจำนวนขายรายวัน)</option>
-          <option value="dish">จานเดี่ยว (รวมในยอดแยกจาน)</option>
+          <option value="dish">แยกจาน (ตั้งราคาแล้วนับจำนวนขายรายวัน)</option>
         </select>
       </div>
       <button class="btn btn-ghost" id="btn-add-item">+ เพิ่มเมนู</button>
@@ -1628,14 +1761,6 @@ async function renderMore() {
   $content.innerHTML = `
     <h1 class="section-title">เพิ่มเติม</h1>
     <div class="card">
-      <div class="row-list">
-        <div class="row-item" style="cursor:pointer;" data-goto-sub="ingredients">
-          <span class="label" style="font-weight:700;color:var(--ink);">วัตถุดิบ / สต็อก</span>
-          <span class="value" style="color:var(--terracotta-deep);">เปิด →</span>
-        </div>
-      </div>
-    </div>
-    <div class="card">
       <div class="empty-state">
         <p>การเงิน / รายงาน</p>
         <p>กำลังจะมาในเวอร์ชันถัดไป</p>
@@ -1684,72 +1809,140 @@ async function renderMore() {
 // ------------------------------------------------------------
 // View: วัตถุดิบ / สต็อก (Ingredients)
 // ------------------------------------------------------------
-async function renderIngredients() {
+let ingredientsDetailId = null;
+
+async function renderIngredients(detailId) {
+  if (detailId !== undefined) ingredientsDetailId = detailId;
+
+  const today = todayStr();
   const ingredients = await listIngredients({ activeOnly: true });
   const lowStock = new Set((await listLowStockIngredients()).map((i) => i.id));
-  const overdueList = await listOverdueStockCounts();
+  const overdueList = await listOverdueStockCounts(today);
   const overdueMap = Object.fromEntries(overdueList.map((o) => [o.ingredient.id, o.reason]));
-  const today = todayStr();
+  const uncountedToday = await listIngredientsUncountedToday(today);
 
-  const cardsHtml = ingredients.length
+  // ---------- ตารางสรุปวัตถุดิบทั้งหมด ----------
+  const tableRowsHtml = ingredients.length
     ? ingredients
         .map((ing) => {
           const stamps = [];
           if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
           if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
           if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
+          const selected = ingredientsDetailId === ing.id;
 
           return `
-        <div class="card" data-ingredient-card="${ing.id}">
-          <div class="row-item" style="border-bottom:none; padding-top:0;">
-            <span class="label" style="font-weight:700; color:var(--ink); font-size:15px;">${escapeHtml(ing.name)}</span>
-            <button class="btn-danger-text" data-remove-ingredient="${ing.id}">ลบ</button>
-          </div>
-          <div style="margin-bottom:10px;">${stamps.join(' ')}</div>
-          <div class="row-item">
-            <span class="label">คงเหลือ</span>
-            <span class="value">${ing.current_stock} ${escapeHtml(ing.unit)}</span>
-          </div>
-          <div class="row-item">
-            <span class="label">ต้นทุนเฉลี่ย/หน่วย</span>
-            <span class="value">${formatMoney(ing.current_avg_cost)}</span>
-          </div>
-
-          <h3 style="margin-top:14px;">บันทึกซื้อเข้า</h3>
-          <div class="field-grid">
-            <div class="field">
-              <label>จำนวน (${escapeHtml(ing.unit)})</label>
-              <input type="number" min="0" step="any" data-purchase-qty="${ing.id}" />
-            </div>
-            <div class="field">
-              <label>ราคา/หน่วย (บาท)</label>
-              <input type="number" min="0" step="any" data-purchase-cost="${ing.id}" />
-            </div>
-          </div>
-          <input type="date" data-purchase-date="${ing.id}" value="${today}" style="margin-bottom:10px;" />
-          <button class="btn btn-ghost btn-small" data-save-purchase="${ing.id}">บันทึกซื้อเข้า</button>
-
-          <h3 style="margin-top:16px;">นับสต็อกปิดร้าน</h3>
-          <div class="field-grid">
-            <div class="field">
-              <label>จำนวนที่นับได้ (${escapeHtml(ing.unit)})</label>
-              <input type="number" min="0" step="any" data-count-closing="${ing.id}" />
-            </div>
-            <div class="field">
-              <label>วันที่นับ</label>
-              <input type="date" data-count-date="${ing.id}" value="${today}" />
-            </div>
-          </div>
-          <button class="btn btn-primary btn-small" data-save-count="${ing.id}">บันทึกนับสต็อก</button>
-          <div data-count-result="${ing.id}" style="margin-top:8px; font-size:13px; color:var(--ink-soft);"></div>
-        </div>`;
+        <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
+          <td style="padding:10px 8px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ink);">${escapeHtml(ing.name)}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${ing.current_stock} ${escapeHtml(ing.unit)}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid var(--line);"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">${stamps.join('')}</div></td>
+        </tr>`;
         })
         .join('')
-    : `<div class="card"><div class="empty-state"><p>ยังไม่มีวัตถุดิบ</p><p>เพิ่มรายการแรกด้านล่างได้เลย</p></div></div>`;
+    : `<tr><td colspan="4" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบ</p><p>เพิ่มรายการแรกด้านบนได้เลย</p></div></td></tr>`;
+
+  const tableHtml = `
+    <div class="card" style="padding:0;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+            <th style="padding:10px 8px;">วัตถุดิบ</th>
+            <th style="padding:10px 8px;text-align:right;">คงเหลือ</th>
+            <th style="padding:10px 8px;text-align:right;">ต้นทุน/หน่วย</th>
+            <th style="padding:10px 8px;">สถานะ</th>
+          </tr>
+        </thead>
+        <tbody>${tableRowsHtml}</tbody>
+      </table>
+    </div>`;
+
+  // ---------- แผงรายละเอียด (เปิดเมื่อแตะแถวในตาราง) ----------
+  const selectedIng = ingredientsDetailId ? ingredients.find((i) => i.id === ingredientsDetailId) : null;
+  let detailHtml = '';
+
+  if (selectedIng) {
+    const lots = await db.ingredient_purchases.where('ingredient_id').equals(selectedIng.id).sortBy('purchase_date');
+    const lotsDesc = lots.slice().reverse();
+    const lotsRowsHtml = lotsDesc.length
+      ? lotsDesc
+          .map(
+            (p) => `
+          <tr>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${p.purchase_date}</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${p.quantity} ${escapeHtml(selectedIng.unit)}</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(p.unit_cost)}</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(p.total_cost)}</td>
+          </tr>`
+          )
+          .join('')
+      : `<tr><td colspan="4" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีประวัติซื้อ</td></tr>`;
+
+    detailHtml = `
+    <div class="card" data-ingredient-detail="${selectedIng.id}">
+      <div class="row-item" style="border-bottom:none;padding-top:0;">
+        <span class="label" style="font-weight:700;color:var(--ink);font-size:16px;">${escapeHtml(selectedIng.name)}</span>
+        <button class="btn-danger-text" data-close-detail="1">ปิด ✕</button>
+      </div>
+      <div class="row-item">
+        <span class="label">คงเหลือ</span>
+        <span class="value">${selectedIng.current_stock} ${escapeHtml(selectedIng.unit)}</span>
+      </div>
+      <div class="row-item">
+        <span class="label">ต้นทุนเฉลี่ย/หน่วย</span>
+        <span class="value">${formatMoney(selectedIng.current_avg_cost)}</span>
+      </div>
+
+      <h3 style="margin-top:14px;">ประวัติราคาซื้อรายล็อต</h3>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+              <th style="padding:6px;">วันที่</th>
+              <th style="padding:6px;text-align:right;">จำนวน</th>
+              <th style="padding:6px;text-align:right;">ราคา/หน่วย</th>
+              <th style="padding:6px;text-align:right;">มูลค่ารวม</th>
+            </tr>
+          </thead>
+          <tbody>${lotsRowsHtml}</tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top:16px;">บันทึกซื้อเข้า</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label for="detail-purchase-qty">จำนวน (${escapeHtml(selectedIng.unit)})</label>
+          <input type="number" min="0" step="any" id="detail-purchase-qty" />
+        </div>
+        <div class="field">
+          <label for="detail-purchase-cost">ราคา/หน่วย (บาท)</label>
+          <input type="number" min="0" step="any" id="detail-purchase-cost" />
+        </div>
+      </div>
+      <input type="date" id="detail-purchase-date" value="${today}" style="margin-bottom:10px;" />
+      <button class="btn btn-ghost btn-small" id="btn-detail-save-purchase">บันทึกซื้อเข้า</button>
+
+      <h3 style="margin-top:16px;">นับสต็อกปิดร้าน</h3>
+      <div class="field-grid">
+        <div class="field">
+          <label for="detail-count-closing">จำนวนที่นับได้ (${escapeHtml(selectedIng.unit)})</label>
+          <input type="number" min="0" step="any" id="detail-count-closing" />
+        </div>
+        <div class="field">
+          <label for="detail-count-date">วันที่นับ</label>
+          <input type="date" id="detail-count-date" value="${today}" />
+        </div>
+      </div>
+      <button class="btn btn-primary btn-small" id="btn-detail-save-count">บันทึกนับสต็อก</button>
+      <div id="detail-count-result" style="margin-top:8px;font-size:13px;color:var(--ink-soft);"></div>
+
+      <button class="btn-danger-text" style="margin-top:16px;" data-remove-ingredient="${selectedIng.id}">ลบวัตถุดิบนี้</button>
+    </div>`;
+  }
 
   $content.innerHTML = `
     <h1 class="section-title">วัตถุดิบ / สต็อก</h1>
-    ${cardsHtml}
+
     <div class="card">
       <h2>เพิ่มวัตถุดิบใหม่</h2>
       <div class="field">
@@ -1775,6 +1968,17 @@ async function renderIngredients() {
       </div>
       <button class="btn btn-ghost" id="btn-add-ingredient">+ เพิ่มวัตถุดิบ</button>
     </div>
+
+    <div class="alert-row">
+      <span class="stamp ${uncountedToday.length > 0 ? 'warn' : 'ok'}">ยังไม่ได้นับสต็อกวันนี้ ${uncountedToday.length} รายการ</span>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <button class="btn btn-ghost btn-small" id="btn-export-lots">ส่งออกประวัติราคาซื้อทุกล็อต (CSV)</button>
+    </div>
+
+    ${tableHtml}
+    ${detailHtml}
   `;
 
   document.getElementById('btn-add-ingredient').addEventListener('click', async () => {
@@ -1789,59 +1993,74 @@ async function renderIngredients() {
         count_frequency: document.getElementById('ing-frequency').value,
       });
       showToast('เพิ่มวัตถุดิบสำเร็จ');
-      renderIngredients();
+      renderIngredients(ingredientsDetailId);
     } catch (err) {
       showToast('เกิดข้อผิดพลาด: ' + err.message);
     }
   });
 
-  document.querySelectorAll('[data-remove-ingredient]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const result = await removeIngredient(btn.dataset.removeIngredient);
-      showToast(result.deleted ? 'ลบวัตถุดิบสำเร็จ' : 'ซ่อนวัตถุดิบแล้ว (มีประวัติซื้อ/นับอยู่ ลบจริงไม่ได้)');
-      renderIngredients();
+  document.getElementById('btn-export-lots').addEventListener('click', () => {
+    exportIngredientPurchaseLotsCsv();
+  });
+
+  document.querySelectorAll('[data-ingredient-row]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = row.dataset.ingredientRow;
+      renderIngredients(ingredientsDetailId === id ? null : id);
     });
   });
 
-  document.querySelectorAll('[data-save-purchase]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.savePurchase;
-      const qty = Number(document.querySelector(`[data-purchase-qty="${id}"]`).value) || 0;
-      const cost = Number(document.querySelector(`[data-purchase-cost="${id}"]`).value) || 0;
-      const date = document.querySelector(`[data-purchase-date="${id}"]`).value;
+  const closeDetailBtn = document.querySelector('[data-close-detail]');
+  if (closeDetailBtn) closeDetailBtn.addEventListener('click', () => renderIngredients(null));
+
+  const removeBtn = document.querySelector('[data-remove-ingredient]');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', async () => {
+      const result = await removeIngredient(removeBtn.dataset.removeIngredient);
+      showToast(result.deleted ? 'ลบวัตถุดิบสำเร็จ' : 'ซ่อนวัตถุดิบแล้ว (มีประวัติซื้อ/นับอยู่ ลบจริงไม่ได้)');
+      renderIngredients(null);
+    });
+  }
+
+  const savePurchaseBtn = document.getElementById('btn-detail-save-purchase');
+  if (savePurchaseBtn) {
+    savePurchaseBtn.addEventListener('click', async () => {
+      const qty = Number(document.getElementById('detail-purchase-qty').value) || 0;
+      const cost = Number(document.getElementById('detail-purchase-cost').value) || 0;
+      const date = document.getElementById('detail-purchase-date').value;
       if (qty <= 0) { showToast('กรุณาใส่จำนวนที่ซื้อ'); return; }
       try {
-        await recordPurchase({ ingredient_id: id, purchase_date: date, quantity: qty, unit_cost: cost });
+        await recordPurchase({ ingredient_id: ingredientsDetailId, purchase_date: date, quantity: qty, unit_cost: cost });
         showToast('บันทึกซื้อเข้าสำเร็จ');
-        renderIngredients();
+        renderIngredients(ingredientsDetailId);
       } catch (err) {
         showToast('เกิดข้อผิดพลาด: ' + err.message);
       }
     });
-  });
+  }
 
-  document.querySelectorAll('[data-save-count]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.saveCount;
-      const closing = Number(document.querySelector(`[data-count-closing="${id}"]`).value) || 0;
-      const date = document.querySelector(`[data-count-date="${id}"]`).value;
+  const saveCountBtn = document.getElementById('btn-detail-save-count');
+  if (saveCountBtn) {
+    saveCountBtn.addEventListener('click', async () => {
+      const closing = Number(document.getElementById('detail-count-closing').value) || 0;
+      const date = document.getElementById('detail-count-date').value;
       try {
-        const result = await recordStockCount({ ingredient_id: id, count_date: date, closing_count: closing });
-        document.querySelector(`[data-count-result="${id}"]`).textContent =
+        const result = await recordStockCount({ ingredient_id: ingredientsDetailId, count_date: date, closing_count: closing });
+        document.getElementById('detail-count-result').textContent =
           `ใช้ไป ${result.used_qty} หน่วย มูลค่า ${formatMoney(result.used_value)}`;
         showToast('บันทึกนับสต็อกสำเร็จ');
       } catch (err) {
         showToast('เกิดข้อผิดพลาด: ' + err.message);
       }
     });
-  });
+  }
 }
 
 // ------------------------------------------------------------
 // Router
 // ------------------------------------------------------------
-const views = { dashboard: renderDashboard, entry: () => renderEntry(), menu: renderMenuSettings, more: renderMore, ingredients: renderIngredients };
-const navHighlightFor = { ingredients: 'more' };
+const views = { dashboard: renderDashboard, entry: () => renderEntry(), menu: renderMenuSettings, more: renderMore, ingredients: () => renderIngredients(null) };
+const navHighlightFor = {};
 
 async function navigate(viewName) {
   const highlightAs = navHighlightFor[viewName] || viewName;

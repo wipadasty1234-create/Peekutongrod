@@ -178,8 +178,8 @@
   }
   nav.bottom-nav button {
     flex: 1; background: none; border: none; cursor: pointer; position: relative;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    padding: 8px 2px; color: var(--ink-soft); font-size: 11px; font-weight: 600;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 8px 1px; color: var(--ink-soft); font-size: 10px; font-weight: 600;
   }
   nav.bottom-nav button.active { color: var(--ember-deep); }
   nav.bottom-nav button.active::before {
@@ -221,6 +221,10 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v4H3z"/><path d="M5 7v13h14V7"/><path d="M9 12h6"/></svg>
     วัตถุดิบ
   </button>
+  <button data-view="finance">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v1M12 16v1"/><path d="M9.5 15c0 1 1 1.5 2.5 1.5s2.5-.6 2.5-1.6c0-1-.8-1.4-2.5-1.9s-2.5-1-2.5-1.9c0-1 1-1.6 2.5-1.6s2.5.5 2.5 1.5"/></svg>
+    การเงิน
+  </button>
   <button data-view="more">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
     เพิ่มเติม
@@ -257,7 +261,7 @@ db.version(1).stores({
   system_settings: 'id, &key',
   buffet_packages: 'id, name, is_active',
   menu_categories: 'id, name, is_active',
-  menu_items: 'id, category_id, item_type, is_active',
+  menu_items: 'id, name, category_id, item_type, is_active',
   shifts: 'id, name',
 
   // ---------- 2) Daily Entry (แทน orders เดิม ตาม SCHEMA_ADDENDUM) ----------
@@ -428,21 +432,27 @@ async function upsertDailyEntry(input) {
 }
 
 /**
- * บันทึก/แก้ไขจำนวนที่ขายของเมนู addon (น้ำ/ขนม) ในวันที่ระบุ
+ * บันทึก/แก้ไขจำนวนที่ขายของเมนู (ทุกประเภทเหมือนกันหมด: ตั้งราคา + นับจำนวนขายรายวัน) ในวันที่ระบุ
  * ใช้ semantics แบบ "set" (กำหนด quantity ใหม่ทับของเดิม) ไม่ใช่บวกเพิ่ม
+ *
+ * รองรับ unit_price_override — ใช้ตอนราคาสินค้าจริงเปลี่ยนไปแล้วแต่ยังไม่ได้แก้ในระบบ (ตั้งค่าเมนู)
+ * ถ้าราคาที่ระบุต่างจากราคาเริ่มต้นของเมนู (default_price) ต้องมี price_override_reason กำกับเสมอ
  */
-async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by = null }) {
+async function recordAddonSale({ entry_date, menu_item_id, quantity, unit_price_override, price_override_reason = null, recorded_by = null }) {
   if (!entry_date || !menu_item_id) throw new Error('entry_date and menu_item_id are required');
 
   const entry = await db.daily_entries.where('entry_date').equals(entry_date).first();
   if (!entry) {
-    throw new Error(`ต้องสร้าง daily_entries ของวันที่ ${entry_date} ก่อน จึงจะบันทึกยอดขาย addon ได้`);
+    throw new Error(`ต้องสร้าง daily_entries ของวันที่ ${entry_date} ก่อน จึงจะบันทึกยอดขายได้`);
   }
 
   const menuItem = await db.menu_items.get(menu_item_id);
   if (!menuItem) throw new Error(`ไม่พบ menu_item_id: ${menu_item_id}`);
-  if (menuItem.item_type !== 'addon' && menuItem.item_type !== 'dish') {
-    throw new Error(`menu_item "${menuItem.name}" ต้องเป็น item_type='addon' หรือ 'dish' เท่านั้น`);
+
+  const unit_price_snapshot = unit_price_override !== undefined && unit_price_override !== null ? unit_price_override : menuItem.default_price;
+  const isOverridden = unit_price_snapshot !== menuItem.default_price;
+  if (isOverridden && !price_override_reason) {
+    throw new Error(`ราคา "${menuItem.name}" ต่างจากราคาที่ตั้งค่าไว้ (${menuItem.default_price}) กรุณาระบุเหตุผลการแก้ไขราคา`);
   }
 
   return db.transaction('rw', db.daily_entries, db.daily_addon_sales, db.daily_entry_edit_logs, async () => {
@@ -453,7 +463,6 @@ async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by
       .equals([entry_date, menu_item_id])
       .first();
 
-    const unit_price_snapshot = menuItem.default_price;
     const subtotal = quantity * unit_price_snapshot;
 
     const record = {
@@ -462,6 +471,7 @@ async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by
       menu_item_id,
       quantity,
       unit_price_snapshot,
+      price_override_reason: isOverridden ? price_override_reason : null,
       subtotal,
     };
     await db.daily_addon_sales.put(record);
@@ -476,7 +486,7 @@ async function recordAddonSale({ entry_date, menu_item_id, quantity, recorded_by
       changed_by: recorded_by,
       before_snapshot,
       after_snapshot,
-      reason: `addon sale: ${menuItem.name}`,
+      reason: isOverridden ? `${menuItem.name}: แก้ราคาเป็น ${unit_price_snapshot} (${price_override_reason})` : `sale: ${menuItem.name}`,
     });
 
     return record;
@@ -661,24 +671,30 @@ async function generateDailySummary(summary_date) {
   // ไม่มี daily_entries = วันแบบ estimated (กรอกมือ) → ไม่แตะ ปล่อยให้ผู้ใช้กรอกเอง
   if (!entry) return null;
 
-  // แยกยอดขายจาก daily_addon_sales ตาม item_type ของเมนู: 'addon' (น้ำ/ขนม) กับ 'dish' (แยกจาน)
+  // แยกยอดขายจาก daily_addon_sales ตาม "หมวดหมู่" ของเมนู (แทนที่ item_type เดิม):
+  //   หมวด 'บุฟเฟต์' -> sales_buffet, หมวด 'อาหารจานหลัก' -> sales_ala_carte, หมวดอื่นๆ -> sales_addon
   const addonRows = await db.daily_addon_sales.where('entry_date').equals(summary_date).toArray();
   let sales_addon = 0;
+  let sales_buffet_from_items = 0;
   let sales_ala_carte_from_dishes = 0;
   for (const row of addonRows) {
     const menuItem = await db.menu_items.get(row.menu_item_id);
-    if (menuItem?.item_type === 'dish') {
+    const category = menuItem ? await db.menu_categories.get(menuItem.category_id) : null;
+    if (category?.name === 'บุฟเฟต์') {
+      sales_buffet_from_items += row.subtotal;
+    } else if (category?.name === 'อาหารจานหลัก') {
       sales_ala_carte_from_dishes += row.subtotal;
     } else {
       sales_addon += row.subtotal;
     }
   }
 
+  // ยอดบุฟเฟต์/แยกจาน ตอนนี้มาจากรายการเมนูที่บันทึกไว้เป็นหลัก — ถ้าวันนั้นยังไม่มีรายการเลย
+  // (ข้อมูลเก่าก่อนรวมบุฟเฟต์เข้ากับรายการเมนู) ให้ fallback ไปใช้ field เดิมของ daily_entries แทน
   const sales_buffet =
-    entry.buffet_adult_count * entry.buffet_adult_price_snapshot +
-    entry.buffet_child_count * entry.buffet_child_price_snapshot;
-  // ยอดแยกจานตอนนี้มาจากจำนวนเมนู 'dish' ที่บันทึกไว้ — ถ้ายังไม่มีรายการ dish เลย
-  // ให้ fallback ไปใช้ ala_carte_total เดิม เพื่อไม่ให้ข้อมูลเก่าก่อนแก้ฟีเจอร์นี้หายไป
+    sales_buffet_from_items > 0
+      ? sales_buffet_from_items
+      : entry.buffet_adult_count * entry.buffet_adult_price_snapshot + entry.buffet_child_count * entry.buffet_child_price_snapshot;
   const sales_ala_carte = sales_ala_carte_from_dishes > 0 ? sales_ala_carte_from_dishes : (entry.ala_carte_total || 0);
   const sales_takeaway = entry.takeaway_total;
 
@@ -1195,20 +1211,40 @@ async function getSalesReport(fromDate, toDate) {
   return { from: fromDate, to: toDate, days_count, totals, averages, by_data_source };
 }
 
-/** สรุปจำนวนหัวลูกค้าบุฟเฟต์ + จำนวนบิลกลับบ้าน ในช่วงวันที่ระบุ (จาก daily_entries โดยตรง) */
+/** สรุปจำนวนหัวลูกค้าบุฟเฟต์ + จำนวนบิลกลับบ้าน ในช่วงวันที่ระบุ
+ *  ที่มาหลัก: daily_addon_sales ของเมนูในหมวดหมู่ 'บุฟเฟต์' (แยกผู้ใหญ่/เด็กด้วยชื่อเมนู)
+ *  ถ้าวันนั้นไม่มีรายการเมนูบุฟเฟต์เลย (ข้อมูลเก่าก่อนรวมบุฟเฟต์เข้ากับรายการเมนู) -> fallback ไปใช้ field เดิม */
 async function getHeadcountSummary(fromDate, toDate) {
   const entries = await db.daily_entries.where('entry_date').between(fromDate, toDate, true, true).toArray();
-  return entries.reduce(
-    (acc, e) => {
-      acc.adult_count += e.buffet_adult_count || 0;
-      acc.child_count += e.buffet_child_count || 0;
-      acc.takeaway_count += e.takeaway_count || 0;
-      if (e.is_closed) acc.days_closed += 1;
-      else acc.days_open += 1;
-      return acc;
-    },
-    { adult_count: 0, child_count: 0, takeaway_count: 0, days_open: 0, days_closed: 0 }
-  );
+  const buffetCategory = await db.menu_categories.where('name').equals('บุฟเฟต์').first();
+
+  const result = { adult_count: 0, child_count: 0, takeaway_count: 0, days_open: 0, days_closed: 0 };
+
+  for (const e of entries) {
+    if (e.is_closed) { result.days_closed += 1; continue; }
+    result.days_open += 1;
+    result.takeaway_count += e.takeaway_count || 0;
+
+    let adultQty = 0;
+    let childQty = 0;
+    if (buffetCategory) {
+      const rows = await db.daily_addon_sales.where('entry_date').equals(e.entry_date).toArray();
+      for (const row of rows) {
+        const menuItem = await db.menu_items.get(row.menu_item_id);
+        if (menuItem?.category_id === buffetCategory.id) {
+          if (menuItem.name.includes('ผู้ใหญ่')) adultQty += row.quantity;
+          else if (menuItem.name.includes('เด็ก')) childQty += row.quantity;
+        }
+      }
+    }
+    if (adultQty === 0 && childQty === 0) {
+      adultQty = e.buffet_adult_count || 0;
+      childQty = e.buffet_child_count || 0;
+    }
+    result.adult_count += adultQty;
+    result.child_count += childQty;
+  }
+  return result;
 }
 
 /** จัดกลุ่มยอดรายเดือน (YYYY-MM) สำหรับกราฟ/รายงานช่วงยาว */
@@ -1412,23 +1448,38 @@ async function exportIngredientPurchaseLotsCsv() {
 // Bootstrap ข้อมูลเริ่มต้น (ครั้งแรกที่เปิดแอป)
 // ------------------------------------------------------------
 async function bootstrapDefaults() {
-  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
-  if (!adultPkg) await createBuffetPackage({ name: 'ผู้ใหญ่', price: 0 });
-
-  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
-  if (!childPkg) await createBuffetPackage({ name: 'เด็ก', price: 0 });
-
   const fee = await getSetting('default_packaging_fee', null);
   if (fee === null) await setSetting('default_packaging_fee', 0);
 
   const shifts = await listShifts();
   if (shifts.length === 0) await createShift({ name: 'ทั่วไป' });
 
-  const cats = await listMenuCategories();
-  if (cats.length === 0) {
-    await createMenuCategory({ name: 'เครื่องดื่ม', display_order: 1 });
-    await createMenuCategory({ name: 'ของทานเล่น', display_order: 2 });
-  }
+  // หมวดหมู่เริ่มต้น — สร้างเฉพาะที่ยังไม่มี ไม่กระทบหมวดที่ผู้ใช้เพิ่มเองไปแล้ว
+  const ensureCategory = async (name, display_order) => {
+    const existing = await db.menu_categories.where('name').equals(name).first();
+    if (existing) return existing;
+    return createMenuCategory({ name, display_order });
+  };
+  const buffetCategory = await ensureCategory('บุฟเฟต์', 0);
+  await ensureCategory('อาหารจานหลัก', 1);
+  await ensureCategory('เครื่องดื่ม', 2);
+  await ensureCategory('ของทานเล่น', 3);
+
+  // ย้ายราคาบุฟเฟต์เดิม (ตาราง buffet_packages รุ่นก่อน) มาเป็นเมนูปกติในหมวด "บุฟเฟต์"
+  // ทำครั้งเดียวตอนยังไม่มีเมนูนี้ — ถ้าเคยตั้งราคาไว้ก่อนอัปเดต จะดึงราคาเดิมมาใช้ ไม่รีเซ็ตเป็น 0
+  const ensureBuffetMenuItem = async (name, legacyPackageName) => {
+    const existing = await db.menu_items.where('name').equals(name).first();
+    if (existing) return existing;
+    const legacyPkg = await db.buffet_packages.where('name').equals(legacyPackageName).first();
+    return createMenuItem({
+      category_id: buffetCategory.id,
+      name,
+      default_price: legacyPkg?.price || 0,
+      item_type: 'standard',
+    });
+  };
+  await ensureBuffetMenuItem('บุฟเฟต์ผู้ใหญ่', 'ผู้ใหญ่');
+  await ensureBuffetMenuItem('บุฟเฟต์เด็ก', 'เด็ก');
 }
 
 // ------------------------------------------------------------
@@ -1581,43 +1632,43 @@ async function renderEntry(dateStr) {
   const date = dateStr || todayStr();
   const entry = await db.daily_entries.where('entry_date').equals(date).first();
 
-  // ราคาบุฟเฟต์ที่จะใช้แสดงคู่กับจำนวนหัว: ถ้าวันนี้มี entry อยู่แล้วให้ใช้ราคาที่ snapshot ไว้
-  // (ตามหลัก snapshot เดิมของระบบ) ถ้ายังไม่มี entry ให้ใช้ราคาปัจจุบันจากตั้งค่าเมนู
-  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
-  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
-  const adultPrice = entry?.buffet_adult_price_snapshot ?? adultPkg?.price ?? 0;
-  const childPrice = entry?.buffet_child_price_snapshot ?? childPkg?.price ?? 0;
+  const categories = await listMenuCategories({ activeOnly: true });
+  const items = await listMenuItems({ activeOnly: true });
+  const existingSales = await db.daily_addon_sales.where('entry_date').equals(date).toArray();
+  const salesMap = Object.fromEntries(existingSales.map((a) => [a.menu_item_id, a]));
 
-  const addonItems = await listMenuItems({ item_type: 'addon', activeOnly: true });
-  const dishItems = await listMenuItems({ item_type: 'dish', activeOnly: true });
-  const existingAddons = await db.daily_addon_sales.where('entry_date').equals(date).toArray();
-  const addonMap = Object.fromEntries(existingAddons.map((a) => [a.menu_item_id, a.quantity]));
-
-  const buildItemRowsHtml = (items) =>
-    items.length
-      ? items
-          .map(
-            (item) => `
+  const buildItemRowsHtml = (categoryItems) =>
+    categoryItems
+      .map((item) => {
+        const existingSale = salesMap[item.id];
+        const priceForDay = existingSale ? existingSale.unit_price_snapshot : item.default_price;
+        return `
         <div class="addon-row">
-          <span class="name">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${formatMoney(item.default_price)})</span></span>
-          <input type="number" min="0" inputmode="numeric" data-menu-item-id="${item.id}" data-item-price="${item.default_price}" value="${addonMap[item.id] || 0}" />
-        </div>`
-          )
-          .join('')
-      : '';
+          <span class="name">${escapeHtml(item.name)}</span>
+          <input type="number" min="0" step="any" class="price-input" data-price-for="${item.id}" data-default-price="${item.default_price}" value="${priceForDay}" style="width:72px;" title="ราคาวันนี้ (บาท) — แก้ได้ถ้าราคาจริงเปลี่ยนแล้วยังไม่ได้แก้ในระบบ" />
+          <input type="number" min="0" inputmode="numeric" class="qty-input" data-menu-item-id="${item.id}" value="${existingSale?.quantity ?? 0}" title="จำนวนที่ขายได้" />
+        </div>`;
+      })
+      .join('');
 
-  const dishRowsHtml = dishItems.length
-    ? buildItemRowsHtml(dishItems)
-    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูแยกจาน — เพิ่มได้ที่ "ตั้งค่าเมนู" (เลือกประเภท "แยกจาน")</p>`;
-
-  const addonRowsHtml = addonItems.length
-    ? buildItemRowsHtml(addonItems)
-    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูน้ำ/ขนม — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`;
+  const categorySectionsHtml = categories.length
+    ? categories
+        .map((cat) => {
+          const catItems = items.filter((i) => i.category_id === cat.id);
+          if (catItems.length === 0) return '';
+          return `<h3>${escapeHtml(cat.name)}</h3>${buildItemRowsHtml(catItems)}`;
+        })
+        .join('')
+    : '';
 
   const isClosed = entry?.is_closed === true;
-  const buffetSubtotal = (entry?.buffet_adult_count ?? 0) * adultPrice + (entry?.buffet_child_count ?? 0) * childPrice;
-  const dishSubtotal = dishItems.reduce((sum, item) => sum + (addonMap[item.id] || 0) * item.default_price, 0);
-  const grandTotal = buffetSubtotal + dishSubtotal + (entry?.takeaway_total ?? 0);
+  const itemsSubtotal = items.reduce((sum, item) => {
+    const existingSale = salesMap[item.id];
+    const price = existingSale ? existingSale.unit_price_snapshot : item.default_price;
+    const qty = existingSale?.quantity ?? 0;
+    return sum + price * qty;
+  }, 0);
+  const grandTotal = itemsSubtotal + (entry?.takeaway_total ?? 0);
 
   $content.innerHTML = `
     <h1 class="section-title">บันทึกยอดวันนี้</h1>
@@ -1635,15 +1686,8 @@ async function renderEntry(dateStr) {
     <div id="sales-section" style="${isClosed ? 'display:none;' : ''}">
       <div class="card">
         <h2>ยอดขาย (ระบุจำนวนนับในแต่ละรายการ)</h2>
-        <div class="addon-row">
-          <span class="name">บุฟเฟต์ผู้ใหญ่ <span style="color:var(--ink-soft)">(${formatMoney(adultPrice)}/หัว)</span></span>
-          <input type="number" id="f-adult" min="0" inputmode="numeric" value="${entry?.buffet_adult_count ?? 0}" />
-        </div>
-        <div class="addon-row">
-          <span class="name">บุฟเฟต์เด็ก <span style="color:var(--ink-soft)">(${formatMoney(childPrice)}/หัว)</span></span>
-          <input type="number" id="f-child" min="0" inputmode="numeric" value="${entry?.buffet_child_count ?? 0}" />
-        </div>
-        ${dishRowsHtml}
+        <p style="font-size:13px;color:var(--ink-soft);margin-top:-10px;">แก้ราคาช่องกลางได้ถ้าราคาจริงเปลี่ยนไปแล้วแต่ยังไม่ได้แก้ในระบบ (ต้องระบุเหตุผลในช่องโน้ตด้านล่าง)</p>
+        ${categorySectionsHtml || `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนู — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`}
         <div class="addon-row">
           <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(จำนวนบิล)</span></span>
           <input type="number" id="f-takeaway-count" min="0" inputmode="numeric" value="${entry?.takeaway_count ?? 0}" />
@@ -1657,16 +1701,11 @@ async function renderEntry(dateStr) {
           <span class="value" id="f-grand-total">${formatMoney(grandTotal)}</span>
         </div>
       </div>
-
-      <div class="card">
-        <h2>น้ำ / ขนม (ระบุจำนวนที่ขายได้)</h2>
-        ${addonRowsHtml}
-      </div>
     </div>
 
     <div class="card">
       <div class="field" style="margin-bottom:0">
-        <label for="f-note">โน้ต (ถ้ามี)</label>
+        <label for="f-note">โน้ต ${'<span style="color:var(--ember-deep);font-weight:400;">(ต้องระบุถ้ามีการแก้ราคา)</span>'}</label>
         <textarea id="f-note" rows="2">${escapeHtml(entry?.note || '')}</textarea>
       </div>
     </div>
@@ -1682,42 +1721,56 @@ async function renderEntry(dateStr) {
   });
 
   function recalcGrandTotal() {
-    const adultCount = Number(document.getElementById('f-adult')?.value) || 0;
-    const childCount = Number(document.getElementById('f-child')?.value) || 0;
-    const buffetSub = adultCount * adultPrice + childCount * childPrice;
-    let dishSub = 0;
-    document.querySelectorAll('[data-menu-item-id]').forEach((input) => {
-      const menuItem = dishItems.find((d) => d.id === input.dataset.menuItemId);
-      if (menuItem) dishSub += (Number(input.value) || 0) * Number(input.dataset.itemPrice);
+    let itemsSub = 0;
+    document.querySelectorAll('.qty-input').forEach((qtyInput) => {
+      const priceInput = document.querySelector(`[data-price-for="${qtyInput.dataset.menuItemId}"]`);
+      itemsSub += (Number(qtyInput.value) || 0) * (Number(priceInput?.value) || 0);
     });
     const takeawayTotal = Number(document.getElementById('f-takeaway-total')?.value) || 0;
     const grandTotalEl = document.getElementById('f-grand-total');
-    if (grandTotalEl) grandTotalEl.textContent = formatMoney(buffetSub + dishSub + takeawayTotal);
+    if (grandTotalEl) grandTotalEl.textContent = formatMoney(itemsSub + takeawayTotal);
   }
-  document.getElementById('sales-section').addEventListener('input', recalcGrandTotal);
+  document.getElementById('sales-section')?.addEventListener('input', recalcGrandTotal);
 
   document.getElementById('btn-save-entry').addEventListener('click', async () => {
     const targetDate = document.getElementById('f-date').value;
     const closed = document.getElementById('f-closed').checked;
+    const note = document.getElementById('f-note').value || null;
+
+    // ตรวจก่อนบันทึกจริง: ถ้ามีการแก้ราคาแถวไหนต่างจากราคาที่ตั้งค่าไว้ ต้องมีโน้ตกำกับเสมอ
+    if (!closed) {
+      const priceOverridden = Array.from(document.querySelectorAll('.price-input')).some(
+        (input) => Number(input.value) !== Number(input.dataset.defaultPrice)
+      );
+      if (priceOverridden && !note) {
+        showToast('มีการแก้ราคาสินค้า กรุณาระบุเหตุผลในช่องโน้ตก่อนบันทึก');
+        return;
+      }
+    }
+
     try {
       await upsertDailyEntry({
         entry_date: targetDate,
         is_closed: closed,
-        buffet_adult_count: closed ? 0 : Number(document.getElementById('f-adult').value) || 0,
-        buffet_child_count: closed ? 0 : Number(document.getElementById('f-child').value) || 0,
         takeaway_total: closed ? 0 : Number(document.getElementById('f-takeaway-total').value) || 0,
         takeaway_count: closed ? 0 : Number(document.getElementById('f-takeaway-count').value) || 0,
-        note: document.getElementById('f-note').value || null,
+        note,
         recorded_by: (await listShifts())[0]?.id ?? null,
       });
 
       if (!closed) {
-        const itemInputs = document.querySelectorAll('[data-menu-item-id]');
-        for (const input of itemInputs) {
+        const qtyInputs = document.querySelectorAll('.qty-input');
+        for (const qtyInput of qtyInputs) {
+          const priceInput = document.querySelector(`[data-price-for="${qtyInput.dataset.menuItemId}"]`);
+          const priceValue = Number(priceInput.value) || 0;
+          const defaultPrice = Number(priceInput.dataset.defaultPrice);
+          const isOverridden = priceValue !== defaultPrice;
           await recordAddonSale({
             entry_date: targetDate,
-            menu_item_id: input.dataset.menuItemId,
-            quantity: Number(input.value) || 0,
+            menu_item_id: qtyInput.dataset.menuItemId,
+            quantity: Number(qtyInput.value) || 0,
+            unit_price_override: priceValue,
+            price_override_reason: isOverridden ? note : null,
           });
         }
       }
@@ -1749,25 +1802,29 @@ async function renderEntry(dateStr) {
 // View: ตั้งค่าเมนู (buffet packages + menu items)
 // ------------------------------------------------------------
 async function renderMenuSettings() {
-  const adultPkg = await db.buffet_packages.where('name').equals('ผู้ใหญ่').first();
-  const childPkg = await db.buffet_packages.where('name').equals('เด็ก').first();
-  const packagingFee = await getSetting('default_packaging_fee', 0);
   const categories = await listMenuCategories({ activeOnly: true });
   const items = await listMenuItems({ activeOnly: true });
 
   const categoryOptions = categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') + `<option value="__new__">+ เพิ่มหมวดหมู่ใหม่...</option>`;
 
-  const itemsHtml = items.length
-    ? items
-        .map(
-          (item) => `
-        <div class="row-item">
-          <span class="label">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${item.item_type === 'addon' ? 'น้ำ/ขนม' : item.item_type === 'dish' ? 'แยกจาน' : 'บรรจุภัณฑ์'})</span></span>
-          <span class="value">${formatMoney(item.default_price)}
-            <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
-          </span>
-        </div>`
-        )
+  const itemsListHtml = categories.length
+    ? categories
+        .map((cat) => {
+          const catItems = items.filter((i) => i.category_id === cat.id);
+          if (catItems.length === 0) return '';
+          const rowsHtml = catItems
+            .map(
+              (item) => `
+            <div class="row-item">
+              <span class="label">${escapeHtml(item.name)}</span>
+              <span class="value">${formatMoney(item.default_price)}
+                <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
+              </span>
+            </div>`
+            )
+            .join('');
+          return `<h3>${escapeHtml(cat.name)}</h3>${rowsHtml}`;
+        })
         .join('')
     : `<div class="empty-state"><p>ยังไม่มีเมนู เพิ่มเมนูแรกด้านล่างได้เลย</p></div>`;
 
@@ -1775,28 +1832,9 @@ async function renderMenuSettings() {
     <h1 class="section-title">ตั้งค่าเมนู</h1>
 
     <div class="card">
-      <h2>ราคาบุฟเฟต์</h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">แก้ราคาแล้วจะมีผลกับ "การบันทึกยอดวันใหม่" เท่านั้น ยอดของวันที่บันทึกไปแล้วจะไม่เปลี่ยนตาม</p>
-      <div class="field-grid">
-        <div class="field">
-          <label for="f-adult-price">ราคาผู้ใหญ่ (บาท)</label>
-          <input type="number" id="f-adult-price" min="0" value="${adultPkg?.price ?? 0}" />
-        </div>
-        <div class="field">
-          <label for="f-child-price">ราคาเด็ก (บาท)</label>
-          <input type="number" id="f-child-price" min="0" value="${childPkg?.price ?? 0}" />
-        </div>
-      </div>
-      <div class="field">
-        <label for="f-packaging-fee">ค่าถุง/ยางรัด ต่อบิลกลับบ้าน (บาท)</label>
-        <input type="number" id="f-packaging-fee" min="0" value="${packagingFee}" />
-      </div>
-      <button class="btn btn-primary" id="btn-save-prices">บันทึกราคา</button>
-    </div>
-
-    <div class="card">
       <h2>รายการเมนู</h2>
-      <div class="row-list">${itemsHtml}</div>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">รวมบุฟเฟต์และเมนูอื่นๆ ไว้ในที่เดียว จัดกลุ่มตามหมวดหมู่ — แก้ราคาแล้วมีผลกับ "การบันทึกยอดวันใหม่" เท่านั้น ยอดที่บันทึกไปแล้วไม่เปลี่ยนตาม</p>
+      <div class="row-list">${itemsListHtml}</div>
     </div>
 
     <div class="card">
@@ -1819,27 +1857,9 @@ async function renderMenuSettings() {
         <label for="f-new-category-name">ชื่อหมวดหมู่ใหม่</label>
         <input type="text" id="f-new-category-name" placeholder="เช่น ของหวาน" />
       </div>
-      <div class="field">
-        <label for="f-item-type">ประเภท</label>
-        <select id="f-item-type">
-          <option value="addon">น้ำ/ขนม (นับจำนวนขายรายวัน)</option>
-          <option value="dish">แยกจาน (ตั้งราคาแล้วนับจำนวนขายรายวัน)</option>
-        </select>
-      </div>
       <button class="btn btn-ghost" id="btn-add-item">+ เพิ่มเมนู</button>
     </div>
   `;
-
-  document.getElementById('btn-save-prices').addEventListener('click', async () => {
-    try {
-      if (adultPkg) await updateBuffetPackage(adultPkg.id, { price: Number(document.getElementById('f-adult-price').value) || 0 });
-      if (childPkg) await updateBuffetPackage(childPkg.id, { price: Number(document.getElementById('f-child-price').value) || 0 });
-      await setSetting('default_packaging_fee', Number(document.getElementById('f-packaging-fee').value) || 0);
-      showToast('บันทึกราคาสำเร็จ');
-    } catch (err) {
-      showToast('เกิดข้อผิดพลาด: ' + err.message);
-    }
-  });
 
   document.getElementById('f-item-category').addEventListener('change', (e) => {
     document.getElementById('new-category-field').style.display = e.target.value === '__new__' ? '' : 'none';
@@ -1860,7 +1880,7 @@ async function renderMenuSettings() {
         category_id: categoryId,
         name,
         default_price: Number(document.getElementById('f-item-price').value) || 0,
-        item_type: document.getElementById('f-item-type').value,
+        item_type: 'standard',
       });
       showToast('เพิ่มเมนูสำเร็จ');
       renderMenuSettings();
@@ -1885,9 +1905,11 @@ async function renderMore() {
   $content.innerHTML = `
     <h1 class="section-title">เพิ่มเติม</h1>
     <div class="card">
-      <div class="empty-state">
-        <p>การเงิน / รายงาน</p>
-        <p>กำลังจะมาในเวอร์ชันถัดไป</p>
+      <div class="row-list">
+        <div class="row-item" style="cursor:pointer;" data-goto-sub="reports">
+          <span class="label" style="font-weight:700;color:var(--ink);">รายงาน</span>
+          <span class="value" style="color:var(--ember-deep);">เปิด →</span>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -1927,6 +1949,288 @@ async function renderMore() {
     } catch (err) {
       showToast('นำเข้าไม่สำเร็จ: ' + err.message);
     }
+  });
+}
+
+// ------------------------------------------------------------
+// View: การเงิน (Finance) — ค่าใช้จ่ายประจำ + บันทึกจ่ายจริง
+// ------------------------------------------------------------
+async function renderFinance() {
+  const expenses = await listOperatingExpenses({ activeOnly: true });
+
+  const to = todayStr();
+  const fromDateObj = new Date();
+  fromDateObj.setDate(fromDateObj.getDate() - 29);
+  const from = fromDateObj.toISOString().slice(0, 10);
+  const recentPayments = (await getExpensePaymentsRange(from, to)).sort((a, b) => (a.payment_date < b.payment_date ? 1 : -1));
+
+  const expenseOptions =
+    `<option value="">— ไม่ผูกกับรายการประจำ (ค่าใช้จ่ายครั้งเดียว) —</option>` +
+    expenses.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
+
+  const expensesListHtml = expenses.length
+    ? expenses
+        .map(
+          (e) => `
+        <div class="row-item">
+          <span class="label">${escapeHtml(e.name)} <span style="color:var(--ink-soft)">(${e.frequency === 'weekly' ? 'รายสัปดาห์' : 'รายเดือน'})</span></span>
+          <span class="value">${formatMoney(e.amount)}
+            <button class="btn-danger-text" data-remove-expense="${e.id}">ลบ</button>
+          </span>
+        </div>`
+        )
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีค่าใช้จ่ายประจำ</p></div>`;
+
+  const paymentsListHtml = recentPayments.length
+    ? recentPayments
+        .map((p) => {
+          const linkedExpense = expenses.find((e) => e.id === p.operating_expense_id);
+          return `
+        <div class="row-item">
+          <span class="label">${p.payment_date} — ${escapeHtml(p.category)}${linkedExpense ? ` (${escapeHtml(linkedExpense.name)})` : ''}</span>
+          <span class="value">${formatMoney(p.amount)}
+            <button class="btn-danger-text" data-remove-payment="${p.id}">ลบ</button>
+          </span>
+        </div>`;
+        })
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีรายการจ่ายจริงใน 30 วันล่าสุด</p></div>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">การเงิน</h1>
+
+    <div class="card">
+      <h2>ค่าใช้จ่ายประจำ</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">คิดเฉลี่ยเป็นต้นทุนรายวันในหน้าสรุปอัตโนมัติ (เช่น ค่าเช่า ค่าเน็ต)</p>
+      <div class="row-list">${expensesListHtml}</div>
+    </div>
+
+    <div class="card">
+      <h2>เพิ่มค่าใช้จ่ายประจำ</h2>
+      <div class="field">
+        <label for="exp-name">ชื่อรายการ</label>
+        <input type="text" id="exp-name" placeholder="เช่น ค่าเช่าร้าน, ค่าเน็ต" />
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="exp-amount">จำนวนเงิน (บาท)</label>
+          <input type="number" id="exp-amount" min="0" />
+        </div>
+        <div class="field">
+          <label for="exp-frequency">ความถี่</label>
+          <select id="exp-frequency">
+            <option value="monthly">รายเดือน</option>
+            <option value="weekly">รายสัปดาห์</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="exp-start-date">เริ่มมีผลตั้งแต่วันที่</label>
+        <input type="date" id="exp-start-date" value="${todayStr()}" />
+      </div>
+      <button class="btn btn-ghost" id="btn-add-expense">+ เพิ่มค่าใช้จ่ายประจำ</button>
+    </div>
+
+    <div class="card">
+      <h2>บันทึกจ่ายจริง</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เงินที่จ่ายออกจริง — แยกจากยอดเฉลี่ยอัตโนมัติด้านบน</p>
+      <div class="field">
+        <label for="pay-expense">ผูกกับรายการประจำ (ถ้ามี)</label>
+        <select id="pay-expense">${expenseOptions}</select>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="pay-date">วันที่จ่าย</label>
+          <input type="date" id="pay-date" value="${todayStr()}" max="${todayStr()}" />
+        </div>
+        <div class="field">
+          <label for="pay-amount">จำนวนเงิน (บาท)</label>
+          <input type="number" id="pay-amount" min="0" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="pay-category">หมวดหมู่</label>
+        <input type="text" id="pay-category" placeholder="เช่น ค่าเช่า, ซ่อมบำรุง, วัตถุดิบเบ็ดเตล็ด" />
+      </div>
+      <div class="field">
+        <label for="pay-note">โน้ต (ถ้ามี)</label>
+        <input type="text" id="pay-note" />
+      </div>
+      <button class="btn btn-primary" id="btn-add-payment">+ บันทึกจ่ายจริง</button>
+    </div>
+
+    <div class="card">
+      <h2>รายการจ่ายจริง 30 วันล่าสุด</h2>
+      <div class="row-list">${paymentsListHtml}</div>
+    </div>
+  `;
+
+  document.getElementById('btn-add-expense').addEventListener('click', async () => {
+    const name = document.getElementById('exp-name').value.trim();
+    if (!name) { showToast('กรุณาใส่ชื่อรายการ'); return; }
+    try {
+      await createOperatingExpense({
+        name,
+        amount: Number(document.getElementById('exp-amount').value) || 0,
+        frequency: document.getElementById('exp-frequency').value,
+        start_date: document.getElementById('exp-start-date').value,
+      });
+      showToast('เพิ่มค่าใช้จ่ายประจำสำเร็จ');
+      renderFinance();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-expense]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const result = await removeOperatingExpense(btn.dataset.removeExpense);
+      showToast(result.deleted ? 'ลบค่าใช้จ่ายประจำสำเร็จ' : 'ซ่อนรายการแล้ว (เคยมีประวัติจ่ายจริงอยู่ ลบจริงไม่ได้ — แนะนำตั้งวันที่สิ้นสุดแทน)');
+      renderFinance();
+    });
+  });
+
+  document.getElementById('btn-add-payment').addEventListener('click', async () => {
+    const category = document.getElementById('pay-category').value.trim();
+    if (!category) { showToast('กรุณาใส่หมวดหมู่'); return; }
+    try {
+      await recordExpensePayment({
+        operating_expense_id: document.getElementById('pay-expense').value || null,
+        payment_date: document.getElementById('pay-date').value,
+        amount: Number(document.getElementById('pay-amount').value) || 0,
+        category,
+        note: document.getElementById('pay-note').value || null,
+      });
+      showToast('บันทึกจ่ายจริงสำเร็จ');
+      renderFinance();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-payment]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await removeExpensePayment(btn.dataset.removePayment);
+      showToast('ลบรายการจ่ายจริงสำเร็จ');
+      renderFinance();
+    });
+  });
+}
+
+// ------------------------------------------------------------
+// View: รายงาน (Reports)
+// ------------------------------------------------------------
+async function renderReports(fromParam, toParam) {
+  const today = todayStr();
+  const defaultFrom = fromParam || `${today.slice(0, 7)}-01`; // ต้นเดือนปัจจุบัน
+  const from = defaultFrom;
+  const to = toParam || today;
+
+  const [topItems, monthly, expenseBreakdown] = await Promise.all([
+    getTopSellingAddons(from, to, 10),
+    getMonthlyBreakdown(from, to),
+    getExpenseBreakdown(from, to),
+  ]);
+
+  const topItemsHtml = topItems.length
+    ? topItems
+        .map(
+          (item, idx) => `
+        <div class="row-item">
+          <span class="label">${idx + 1}. ${escapeHtml(item.name)}</span>
+          <span class="value">${item.total_quantity} หน่วย (${formatMoney(item.total_revenue)})</span>
+        </div>`
+        )
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีข้อมูลยอดขายในช่วงนี้</p></div>`;
+
+  const monthlyHtml = monthly.length
+    ? `<div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+              <th style="padding:6px;">เดือน</th>
+              <th style="padding:6px;text-align:right;">ยอดขายรวม</th>
+              <th style="padding:6px;text-align:right;">ต้นทุน+ค่าใช้จ่าย</th>
+              <th style="padding:6px;text-align:right;">กำไรสุทธิ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${monthly
+              .map((m) => {
+                const revenue = m.sales_buffet + m.sales_ala_carte + m.sales_takeaway + m.sales_addon;
+                const cost = m.cogs + m.packaging_cost + m.operating_expense;
+                return `
+                <tr>
+                  <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${m.month}</td>
+                  <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(revenue)}</td>
+                  <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(cost)}</td>
+                  <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;" class="${m.net_profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(m.net_profit)}</td>
+                </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>`
+    : `<div class="empty-state"><p>ยังไม่มีข้อมูลในช่วงนี้</p></div>`;
+
+  const maxExpense = expenseBreakdown.length ? Math.max(...expenseBreakdown.map((e) => e.total_amount)) : 1;
+  const expenseBreakdownHtml = expenseBreakdown.length
+    ? expenseBreakdown
+        .map(
+          (e) => `
+        <div style="margin-bottom:10px;">
+          <div class="row-item" style="border-bottom:none;padding-bottom:4px;">
+            <span class="label">${escapeHtml(e.category)}</span>
+            <span class="value">${formatMoney(e.total_amount)}</span>
+          </div>
+          <div style="background:var(--line);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="background:var(--ember);height:100%;width:${(e.total_amount / maxExpense) * 100}%;"></div>
+          </div>
+        </div>`
+        )
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีรายการจ่ายจริงในช่วงนี้</p></div>`;
+
+  $content.innerHTML = `
+    <h1 class="section-title">รายงาน</h1>
+
+    <div class="card">
+      <h2>ช่วงวันที่ดูรายงาน</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label for="rep-from">จากวันที่</label>
+          <input type="date" id="rep-from" value="${from}" max="${today}" />
+        </div>
+        <div class="field">
+          <label for="rep-to">ถึงวันที่</label>
+          <input type="date" id="rep-to" value="${to}" max="${today}" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>เมนูขายดี</h2>
+      <div class="row-list">${topItemsHtml}</div>
+    </div>
+
+    <div class="card">
+      <h2>สรุปรายเดือน</h2>
+      ${monthlyHtml}
+    </div>
+
+    <div class="card">
+      <h2>ค่าใช้จ่ายจริงแยกตามหมวดหมู่</h2>
+      ${expenseBreakdownHtml}
+    </div>
+  `;
+
+  document.getElementById('rep-from').addEventListener('change', (e) => {
+    renderReports(e.target.value, document.getElementById('rep-to').value);
+  });
+  document.getElementById('rep-to').addEventListener('change', (e) => {
+    renderReports(document.getElementById('rep-from').value, e.target.value);
   });
 }
 
@@ -2253,8 +2557,8 @@ async function renderIngredients(detailId) {
 // ------------------------------------------------------------
 // Router
 // ------------------------------------------------------------
-const views = { dashboard: renderDashboard, entry: () => renderEntry(), menu: renderMenuSettings, more: renderMore, ingredients: () => renderIngredients(null) };
-const navHighlightFor = {};
+const views = { dashboard: renderDashboard, entry: () => renderEntry(), menu: renderMenuSettings, more: renderMore, ingredients: () => renderIngredients(null), finance: renderFinance, reports: () => renderReports() };
+const navHighlightFor = { reports: 'more' };
 
 async function navigate(viewName) {
   const highlightAs = navHighlightFor[viewName] || viewName;
@@ -2275,7 +2579,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // เผื่อ debug ผ่าน browser devtools console (เช่น window.__app.db.daily_entries.toArray())
-window.__app = { db, getSetting, setSetting, listOverdueStockCounts, recordPurchase, recordStockCount };
+window.__app = { db, getSetting, setSetting, listOverdueStockCounts, recordPurchase, recordStockCount, getHeadcountSummary };
 
 // ------------------------------------------------------------
 // Boot

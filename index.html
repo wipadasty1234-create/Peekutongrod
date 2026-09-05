@@ -351,6 +351,7 @@ async function upsertDailyEntry(input) {
     ala_carte_total = 0,
     takeaway_total = 0,
     takeaway_count = 0,
+    is_closed = false,
     note = null,
     recorded_by = null,
     adult_package_name = 'ผู้ใหญ่',
@@ -396,6 +397,7 @@ async function upsertDailyEntry(input) {
         ala_carte_total,
         takeaway_total,
         takeaway_count,
+        is_closed,
         note,
         recorded_by,
         created_at: existing ? existing.created_at : nowIso(),
@@ -707,6 +709,7 @@ async function generateDailySummary(summary_date) {
     id: uuid(),
     summary_date,
     data_source: 'transactional',
+    is_closed: entry.is_closed || false,
     sales_buffet,
     sales_ala_carte,
     sales_takeaway,
@@ -952,11 +955,15 @@ async function listOverdueStockCounts(checkDate = new Date().toISOString().slice
   const ingredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
   const overdue = [];
 
+  const dayEntry = await db.daily_entries.where('entry_date').equals(checkDate).first();
+  const dayClosed = dayEntry?.is_closed === true;
+
   for (const ing of ingredients) {
     const counts = await db.ingredient_stock_counts.where('ingredient_id').equals(ing.id).sortBy('count_date');
     const lastCount = counts.length ? counts[counts.length - 1] : null;
 
     if (ing.count_frequency === 'daily') {
+      if (dayClosed) continue; // ร้านปิดวันนี้ -> ไม่ต้องนับสต็อกรายวัน ไม่ถือว่าเกินกำหนด
       const countedToday = counts.some((c) => c.count_date === checkDate);
       if (!countedToday) overdue.push({ ingredient: ing, reason: 'ยังไม่ได้นับวันนี้', last_count_date: lastCount?.count_date ?? null });
     } else if (ing.count_frequency === 'weekly') {
@@ -974,8 +981,12 @@ async function listOverdueStockCounts(checkDate = new Date().toISOString().slice
 }
 
 /** วัตถุดิบที่ "ยังไม่มีการนับสต็อกในวันที่ระบุ" (default = วันนี้) — นับตรงตัวไม่สนใจ count_frequency
- *  ต่างจาก listOverdueStockCounts ตรงที่ตัวนี้ไม่สน daily/weekly เอาแค่ "วันนี้นับหรือยัง" */
+ *  ต่างจาก listOverdueStockCounts ตรงที่ตัวนี้ไม่สน daily/weekly เอาแค่ "วันนี้นับหรือยัง"
+ *  ถ้าวันนั้นร้านปิด (is_closed) ให้ถือว่าไม่ต้องนับเลย คืนค่าว่าง */
 async function listIngredientsUncountedToday(checkDate = new Date().toISOString().slice(0, 10)) {
+  const dayEntry = await db.daily_entries.where('entry_date').equals(checkDate).first();
+  if (dayEntry?.is_closed === true) return [];
+
   const activeIngredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
   const countsToday = await db.ingredient_stock_counts.where('count_date').equals(checkDate).toArray();
   const countedIds = new Set(countsToday.map((c) => c.ingredient_id));
@@ -1182,6 +1193,22 @@ async function getSalesReport(fromDate, toDate) {
   }, {});
 
   return { from: fromDate, to: toDate, days_count, totals, averages, by_data_source };
+}
+
+/** สรุปจำนวนหัวลูกค้าบุฟเฟต์ + จำนวนบิลกลับบ้าน ในช่วงวันที่ระบุ (จาก daily_entries โดยตรง) */
+async function getHeadcountSummary(fromDate, toDate) {
+  const entries = await db.daily_entries.where('entry_date').between(fromDate, toDate, true, true).toArray();
+  return entries.reduce(
+    (acc, e) => {
+      acc.adult_count += e.buffet_adult_count || 0;
+      acc.child_count += e.buffet_child_count || 0;
+      acc.takeaway_count += e.takeaway_count || 0;
+      if (e.is_closed) acc.days_closed += 1;
+      else acc.days_open += 1;
+      return acc;
+    },
+    { adult_count: 0, child_count: 0, takeaway_count: 0, days_open: 0, days_closed: 0 }
+  );
 }
 
 /** จัดกลุ่มยอดรายเดือน (YYYY-MM) สำหรับกราฟ/รายงานช่วงยาว */
@@ -1430,15 +1457,34 @@ async function renderHeader() {
 // ------------------------------------------------------------
 // View: Dashboard
 // ------------------------------------------------------------
-async function renderDashboard() {
-  const to = todayStr();
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - 6);
-  const from = fromDate.toISOString().slice(0, 10);
+function buildRevenueExpenseChartSvg(totalRevenue, totalExpense) {
+  const maxVal = Math.max(totalRevenue, totalExpense, 1);
+  const chartH = 110;
+  const baseY = 130;
+  const revH = (totalRevenue / maxVal) * chartH;
+  const expH = (totalExpense / maxVal) * chartH;
+  return `
+    <svg viewBox="0 0 220 160" style="width:100%;max-width:280px;display:block;margin:0 auto;">
+      <line x1="10" y1="${baseY}" x2="210" y2="${baseY}" stroke="var(--line)" stroke-width="1" />
+      <rect x="45" y="${baseY - revH}" width="55" height="${revH}" rx="4" fill="var(--moss)" />
+      <text x="72" y="${baseY - revH - 8}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${formatMoney(totalRevenue)}</text>
+      <text x="72" y="${baseY + 18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">รายรับ</text>
+      <rect x="120" y="${baseY - expH}" width="55" height="${expH}" rx="4" fill="var(--ember)" />
+      <text x="147" y="${baseY - expH - 8}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${formatMoney(totalExpense)}</text>
+      <text x="147" y="${baseY + 18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">รายจ่าย</text>
+    </svg>`;
+}
+
+async function renderDashboard(fromParam, toParam) {
+  const today = todayStr();
+  const from = fromParam || today;
+  const to = toParam || today;
 
   const rows = await getDailySummaryRange(from, to);
+  const salesReport = await getSalesReport(from, to);
+  const headcount = await getHeadcountSummary(from, to);
   const lowStock = await listLowStockIngredients();
-  const overdue = await listOverdueStockCounts(to);
+  const overdue = await listOverdueStockCounts(today);
 
   let alertsHtml = '';
   if (lowStock.length > 0 || overdue.length > 0) {
@@ -1452,29 +1498,80 @@ async function renderDashboard() {
     alertsHtml += `</div>`;
   }
 
+  const totalExpense = salesReport.totals.cogs + salesReport.totals.packaging_cost + salesReport.totals.operating_expense;
+
   const rowsHtml = rows.length
     ? rows
         .slice()
         .reverse()
         .map((r) => {
           const cls = r.net_profit >= 0 ? 'profit-pos' : 'profit-neg';
-          const src = r.data_source === 'estimated' ? ' (ประมาณการ)' : '';
+          const src = r.data_source === 'estimated' ? ' (ประมาณการ)' : r.is_closed ? ' (ปิดร้าน)' : '';
           return `<div class="row-item">
             <span class="label">${r.summary_date}${src}</span>
             <span class="value ${cls}">${formatMoney(r.net_profit)}</span>
           </div>`;
         })
         .join('')
-    : `<div class="empty-state"><p>ยังไม่มีข้อมูล 7 วันล่าสุด</p><p>เริ่มบันทึกยอดวันนี้ได้เลย</p></div>`;
+    : `<div class="empty-state"><p>ยังไม่มีข้อมูลในช่วงที่เลือก</p><p>เริ่มบันทึกยอดวันนี้ได้เลย</p></div>`;
 
   $content.innerHTML = `
     <h1 class="section-title">ภาพรวม</h1>
-    ${alertsHtml}
+
     <div class="card">
-      <h2>7 วันล่าสุด</h2>
+      <h2>ช่วงวันที่ดูข้อมูล</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label for="dash-from">จากวันที่</label>
+          <input type="date" id="dash-from" value="${from}" max="${today}" />
+        </div>
+        <div class="field">
+          <label for="dash-to">ถึงวันที่</label>
+          <input type="date" id="dash-to" value="${to}" max="${today}" />
+        </div>
+      </div>
+    </div>
+
+    ${alertsHtml}
+
+    <div class="card">
+      <h2>รายรับ vs รายจ่าย</h2>
+      ${buildRevenueExpenseChartSvg(salesReport.totals.total_revenue, totalExpense)}
+      <div class="row-list" style="margin-top:14px;">
+        <div class="row-item"><span class="label">ยอดขายบุฟเฟต์</span><span class="value">${formatMoney(salesReport.totals.sales_buffet)}</span></div>
+        <div class="row-item"><span class="label">ยอดขายแยกจาน</span><span class="value">${formatMoney(salesReport.totals.sales_ala_carte)}</span></div>
+        <div class="row-item"><span class="label">ยอดขายกลับบ้าน</span><span class="value">${formatMoney(salesReport.totals.sales_takeaway)}</span></div>
+        <div class="row-item"><span class="label">ยอดขายน้ำ/ขนม</span><span class="value">${formatMoney(salesReport.totals.sales_addon)}</span></div>
+        <div class="row-item"><span class="label">ต้นทุนวัตถุดิบ (COGS)</span><span class="value">${formatMoney(salesReport.totals.cogs)}</span></div>
+        <div class="row-item"><span class="label">ค่าถุง</span><span class="value">${formatMoney(salesReport.totals.packaging_cost)}</span></div>
+        <div class="row-item"><span class="label">ค่าใช้จ่ายประจำ</span><span class="value">${formatMoney(salesReport.totals.operating_expense)}</span></div>
+        <div class="row-item"><span class="label" style="font-weight:700;">กำไรสุทธิรวม</span><span class="value ${salesReport.totals.net_profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(salesReport.totals.net_profit)}</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>จำนวนหัวลูกค้า</h2>
+      <div class="row-list">
+        <div class="row-item"><span class="label">บุฟเฟต์ผู้ใหญ่</span><span class="value">${headcount.adult_count} คน</span></div>
+        <div class="row-item"><span class="label">บุฟเฟต์เด็ก</span><span class="value">${headcount.child_count} คน</span></div>
+        <div class="row-item"><span class="label" style="font-weight:700;">รวมหัวบุฟเฟต์</span><span class="value">${headcount.adult_count + headcount.child_count} คน</span></div>
+        <div class="row-item"><span class="label">จำนวนบิลกลับบ้าน</span><span class="value">${headcount.takeaway_count} บิล</span></div>
+        <div class="row-item"><span class="label">วันเปิด / ปิดร้าน</span><span class="value">${headcount.days_open} / ${headcount.days_closed} วัน</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>รายวันในช่วงที่เลือก</h2>
       <div class="row-list">${rowsHtml}</div>
     </div>
   `;
+
+  document.getElementById('dash-from').addEventListener('change', (e) => {
+    renderDashboard(e.target.value, document.getElementById('dash-to').value);
+  });
+  document.getElementById('dash-to').addEventListener('change', (e) => {
+    renderDashboard(document.getElementById('dash-from').value, e.target.value);
+  });
 }
 
 // ------------------------------------------------------------
@@ -1503,7 +1600,7 @@ async function renderEntry(dateStr) {
             (item) => `
         <div class="addon-row">
           <span class="name">${escapeHtml(item.name)} <span style="color:var(--ink-soft)">(${formatMoney(item.default_price)})</span></span>
-          <input type="number" min="0" inputmode="numeric" data-menu-item-id="${item.id}" value="${addonMap[item.id] || 0}" />
+          <input type="number" min="0" inputmode="numeric" data-menu-item-id="${item.id}" data-item-price="${item.default_price}" value="${addonMap[item.id] || 0}" />
         </div>`
           )
           .join('')
@@ -1511,13 +1608,16 @@ async function renderEntry(dateStr) {
 
   const dishRowsHtml = dishItems.length
     ? buildItemRowsHtml(dishItems)
-    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูแยกจาน — เพิ่มได้ที่ "ตั้งค่าเมนู" (เลือกประเภท "จานเดี่ยว / แยกจาน")</p>`;
+    : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูแยกจาน — เพิ่มได้ที่ "ตั้งค่าเมนู" (เลือกประเภท "แยกจาน")</p>`;
 
   const addonRowsHtml = addonItems.length
     ? buildItemRowsHtml(addonItems)
     : `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนูน้ำ/ขนม — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`;
 
+  const isClosed = entry?.is_closed === true;
   const buffetSubtotal = (entry?.buffet_adult_count ?? 0) * adultPrice + (entry?.buffet_child_count ?? 0) * childPrice;
+  const dishSubtotal = dishItems.reduce((sum, item) => sum + (addonMap[item.id] || 0) * item.default_price, 0);
+  const grandTotal = buffetSubtotal + dishSubtotal + (entry?.takeaway_total ?? 0);
 
   $content.innerHTML = `
     <h1 class="section-title">บันทึกยอดวันนี้</h1>
@@ -1526,48 +1626,42 @@ async function renderEntry(dateStr) {
         <label for="f-date">วันที่</label>
         <input type="date" id="f-date" value="${date}" max="${todayStr()}" />
       </div>
+      <div class="row-item" style="border-bottom:none; padding-top:0;">
+        <label for="f-closed" style="margin-bottom:0; cursor:pointer;">ร้านปิดวันนี้ (ไม่มีการขาย)</label>
+        <input type="checkbox" id="f-closed" ${isClosed ? 'checked' : ''} style="width:auto;" />
+      </div>
     </div>
 
-    <div class="card">
-      <h2>บุฟเฟต์</h2>
-      <div class="field-grid">
-        <div class="field">
-          <label for="f-adult">จำนวนหัวผู้ใหญ่ <span style="font-weight:400;color:var(--ink-soft);">(${formatMoney(adultPrice)}/หัว)</span></label>
+    <div id="sales-section" style="${isClosed ? 'display:none;' : ''}">
+      <div class="card">
+        <h2>ยอดขาย (ระบุจำนวนนับในแต่ละรายการ)</h2>
+        <div class="addon-row">
+          <span class="name">บุฟเฟต์ผู้ใหญ่ <span style="color:var(--ink-soft)">(${formatMoney(adultPrice)}/หัว)</span></span>
           <input type="number" id="f-adult" min="0" inputmode="numeric" value="${entry?.buffet_adult_count ?? 0}" />
         </div>
-        <div class="field">
-          <label for="f-child">จำนวนหัวเด็ก <span style="font-weight:400;color:var(--ink-soft);">(${formatMoney(childPrice)}/หัว)</span></label>
+        <div class="addon-row">
+          <span class="name">บุฟเฟต์เด็ก <span style="color:var(--ink-soft)">(${formatMoney(childPrice)}/หัว)</span></span>
           <input type="number" id="f-child" min="0" inputmode="numeric" value="${entry?.buffet_child_count ?? 0}" />
         </div>
-      </div>
-      <div class="row-item" style="border-bottom:none;">
-        <span class="label">ยอดบุฟเฟต์รวม</span>
-        <span class="value" id="f-buffet-subtotal">${formatMoney(buffetSubtotal)}</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>แยกจาน (ระบุจำนวนที่ขายได้)</h2>
-      ${dishRowsHtml}
-    </div>
-
-    <div class="card">
-      <h2>กลับบ้าน</h2>
-      <div class="field-grid">
-        <div class="field">
-          <label for="f-takeaway-total">ยอดขายกลับบ้าน (บาท)</label>
-          <input type="number" id="f-takeaway-total" min="0" inputmode="decimal" value="${entry?.takeaway_total ?? 0}" />
-        </div>
-        <div class="field">
-          <label for="f-takeaway-count">จำนวนบิลกลับบ้าน</label>
+        ${dishRowsHtml}
+        <div class="addon-row">
+          <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(จำนวนบิล)</span></span>
           <input type="number" id="f-takeaway-count" min="0" inputmode="numeric" value="${entry?.takeaway_count ?? 0}" />
         </div>
+        <div class="addon-row">
+          <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(ยอดขายรวม บาท)</span></span>
+          <input type="number" id="f-takeaway-total" min="0" inputmode="decimal" value="${entry?.takeaway_total ?? 0}" />
+        </div>
+        <div class="row-item" style="border-bottom:none;">
+          <span class="label" style="font-weight:700;">ยอดขายรวมโดยประมาณ</span>
+          <span class="value" id="f-grand-total">${formatMoney(grandTotal)}</span>
+        </div>
       </div>
-    </div>
 
-    <div class="card">
-      <h2>น้ำ / ขนม (ระบุจำนวนที่ขายได้)</h2>
-      ${addonRowsHtml}
+      <div class="card">
+        <h2>น้ำ / ขนม (ระบุจำนวนที่ขายได้)</h2>
+        ${addonRowsHtml}
+      </div>
     </div>
 
     <div class="card">
@@ -1583,34 +1677,49 @@ async function renderEntry(dateStr) {
 
   document.getElementById('f-date').addEventListener('change', (e) => renderEntry(e.target.value));
 
-  function recalcBuffetSubtotal() {
-    const adultCount = Number(document.getElementById('f-adult').value) || 0;
-    const childCount = Number(document.getElementById('f-child').value) || 0;
-    document.getElementById('f-buffet-subtotal').textContent = formatMoney(adultCount * adultPrice + childCount * childPrice);
+  document.getElementById('f-closed').addEventListener('change', (e) => {
+    document.getElementById('sales-section').style.display = e.target.checked ? 'none' : '';
+  });
+
+  function recalcGrandTotal() {
+    const adultCount = Number(document.getElementById('f-adult')?.value) || 0;
+    const childCount = Number(document.getElementById('f-child')?.value) || 0;
+    const buffetSub = adultCount * adultPrice + childCount * childPrice;
+    let dishSub = 0;
+    document.querySelectorAll('[data-menu-item-id]').forEach((input) => {
+      const menuItem = dishItems.find((d) => d.id === input.dataset.menuItemId);
+      if (menuItem) dishSub += (Number(input.value) || 0) * Number(input.dataset.itemPrice);
+    });
+    const takeawayTotal = Number(document.getElementById('f-takeaway-total')?.value) || 0;
+    const grandTotalEl = document.getElementById('f-grand-total');
+    if (grandTotalEl) grandTotalEl.textContent = formatMoney(buffetSub + dishSub + takeawayTotal);
   }
-  document.getElementById('f-adult').addEventListener('input', recalcBuffetSubtotal);
-  document.getElementById('f-child').addEventListener('input', recalcBuffetSubtotal);
+  document.getElementById('sales-section').addEventListener('input', recalcGrandTotal);
 
   document.getElementById('btn-save-entry').addEventListener('click', async () => {
     const targetDate = document.getElementById('f-date').value;
+    const closed = document.getElementById('f-closed').checked;
     try {
       await upsertDailyEntry({
         entry_date: targetDate,
-        buffet_adult_count: Number(document.getElementById('f-adult').value) || 0,
-        buffet_child_count: Number(document.getElementById('f-child').value) || 0,
-        takeaway_total: Number(document.getElementById('f-takeaway-total').value) || 0,
-        takeaway_count: Number(document.getElementById('f-takeaway-count').value) || 0,
+        is_closed: closed,
+        buffet_adult_count: closed ? 0 : Number(document.getElementById('f-adult').value) || 0,
+        buffet_child_count: closed ? 0 : Number(document.getElementById('f-child').value) || 0,
+        takeaway_total: closed ? 0 : Number(document.getElementById('f-takeaway-total').value) || 0,
+        takeaway_count: closed ? 0 : Number(document.getElementById('f-takeaway-count').value) || 0,
         note: document.getElementById('f-note').value || null,
         recorded_by: (await listShifts())[0]?.id ?? null,
       });
 
-      const itemInputs = document.querySelectorAll('[data-menu-item-id]');
-      for (const input of itemInputs) {
-        await recordAddonSale({
-          entry_date: targetDate,
-          menu_item_id: input.dataset.menuItemId,
-          quantity: Number(input.value) || 0,
-        });
+      if (!closed) {
+        const itemInputs = document.querySelectorAll('[data-menu-item-id]');
+        for (const input of itemInputs) {
+          await recordAddonSale({
+            entry_date: targetDate,
+            menu_item_id: input.dataset.menuItemId,
+            quantity: Number(input.value) || 0,
+          });
+        }
       }
 
       const summary = await db.daily_summary.where('summary_date').equals(targetDate).first();
@@ -1627,7 +1736,7 @@ async function renderEntry(dateStr) {
            </div>`
         : '';
 
-      showToast('บันทึกสำเร็จ');
+      showToast(closed ? 'บันทึกวันปิดร้านสำเร็จ' : 'บันทึกสำเร็จ');
       renderHeader();
     } catch (err) {
       showToast('เกิดข้อผิดพลาด: ' + err.message);
@@ -1646,7 +1755,7 @@ async function renderMenuSettings() {
   const categories = await listMenuCategories({ activeOnly: true });
   const items = await listMenuItems({ activeOnly: true });
 
-  const categoryOptions = categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  const categoryOptions = categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('') + `<option value="__new__">+ เพิ่มหมวดหมู่ใหม่...</option>`;
 
   const itemsHtml = items.length
     ? items
@@ -1706,6 +1815,10 @@ async function renderMenuSettings() {
           <select id="f-item-category">${categoryOptions}</select>
         </div>
       </div>
+      <div class="field" id="new-category-field" style="display:none;">
+        <label for="f-new-category-name">ชื่อหมวดหมู่ใหม่</label>
+        <input type="text" id="f-new-category-name" placeholder="เช่น ของหวาน" />
+      </div>
       <div class="field">
         <label for="f-item-type">ประเภท</label>
         <select id="f-item-type">
@@ -1728,12 +1841,23 @@ async function renderMenuSettings() {
     }
   });
 
+  document.getElementById('f-item-category').addEventListener('change', (e) => {
+    document.getElementById('new-category-field').style.display = e.target.value === '__new__' ? '' : 'none';
+  });
+
   document.getElementById('btn-add-item').addEventListener('click', async () => {
     const name = document.getElementById('f-item-name').value.trim();
     if (!name) { showToast('กรุณาใส่ชื่อเมนู'); return; }
     try {
+      let categoryId = document.getElementById('f-item-category').value;
+      if (categoryId === '__new__') {
+        const newCategoryName = document.getElementById('f-new-category-name').value.trim();
+        if (!newCategoryName) { showToast('กรุณาใส่ชื่อหมวดหมู่ใหม่'); return; }
+        const newCategory = await createMenuCategory({ name: newCategoryName, display_order: categories.length + 1 });
+        categoryId = newCategory.id;
+      }
       await createMenuItem({
-        category_id: document.getElementById('f-item-category').value,
+        category_id: categoryId,
         name,
         default_price: Number(document.getElementById('f-item-price').value) || 0,
         item_type: document.getElementById('f-item-type').value,
@@ -1820,6 +1944,8 @@ async function renderIngredients(detailId) {
   const overdueList = await listOverdueStockCounts(today);
   const overdueMap = Object.fromEntries(overdueList.map((o) => [o.ingredient.id, o.reason]));
   const uncountedToday = await listIngredientsUncountedToday(today);
+  const todayEntry = await db.daily_entries.where('entry_date').equals(today).first();
+  const todayClosed = todayEntry?.is_closed === true;
 
   // ---------- ตารางสรุปวัตถุดิบทั้งหมด ----------
   const tableRowsHtml = ingredients.length
@@ -1970,11 +2096,38 @@ async function renderIngredients(detailId) {
     </div>
 
     <div class="alert-row">
-      <span class="stamp ${uncountedToday.length > 0 ? 'warn' : 'ok'}">ยังไม่ได้นับสต็อกวันนี้ ${uncountedToday.length} รายการ</span>
+      ${
+        todayClosed
+          ? `<span class="stamp ok">วันนี้ร้านปิด — ไม่ต้องนับสต็อก (เชื่อมกับ "บันทึกวันนี้")</span>`
+          : `<span class="stamp ${uncountedToday.length > 0 ? 'warn' : 'ok'}">ยังไม่ได้นับสต็อกวันนี้ ${uncountedToday.length} รายการ</span>`
+      }
     </div>
 
     <div style="margin-bottom:16px;">
       <button class="btn btn-ghost btn-small" id="btn-export-lots">ส่งออกประวัติราคาซื้อทุกล็อต (CSV)</button>
+    </div>
+
+    <div class="card">
+      <h2>สรุปการใช้วัตถุดิบรายวัน</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">ดูว่าวัตถุดิบแต่ละอย่างถูกใช้ไปมากน้อยแค่ไหนในแต่ละวัน เพื่อประเมินต้นทุนอาหาร</p>
+      <div class="field">
+        <label for="usage-ingredient">วัตถุดิบ</label>
+        <select id="usage-ingredient">
+          ${ingredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="usage-from">จากวันที่</label>
+          <input type="date" id="usage-from" value="${(() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); })()}" max="${today}" />
+        </div>
+        <div class="field">
+          <label for="usage-to">ถึงวันที่</label>
+          <input type="date" id="usage-to" value="${today}" max="${today}" />
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-small" id="btn-view-usage">ดูสรุป</button>
+      <div id="usage-result" style="margin-top:14px;"></div>
     </div>
 
     ${tableHtml}
@@ -2001,6 +2154,47 @@ async function renderIngredients(detailId) {
 
   document.getElementById('btn-export-lots').addEventListener('click', () => {
     exportIngredientPurchaseLotsCsv();
+  });
+
+  document.getElementById('btn-view-usage')?.addEventListener('click', async () => {
+    const ingredientId = document.getElementById('usage-ingredient').value;
+    const from = document.getElementById('usage-from').value;
+    const to = document.getElementById('usage-to').value;
+    const ing = ingredients.find((i) => i.id === ingredientId);
+    if (!ing) return;
+
+    const report = await getIngredientUsageReport(ingredientId, from, to);
+    const rowsHtml = report.records.length
+      ? report.records
+          .map(
+            (r) => `
+        <tr>
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${r.count_date}</td>
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${r.used_qty} ${escapeHtml(ing.unit)}</td>
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(r.used_value)}</td>
+        </tr>`
+          )
+          .join('')
+      : `<tr><td colspan="3" style="padding:10px 6px;color:var(--ink-soft);">ไม่มีข้อมูลการนับสต็อกในช่วงนี้</td></tr>`;
+
+    document.getElementById('usage-result').innerHTML = `
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+              <th style="padding:6px;">วันที่นับ</th>
+              <th style="padding:6px;text-align:right;">ใช้ไป</th>
+              <th style="padding:6px;text-align:right;">มูลค่า</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <div class="row-item" style="border-bottom:none;margin-top:4px;">
+        <span class="label" style="font-weight:700;">รวมทั้งช่วง</span>
+        <span class="value">${report.total_used_qty} ${escapeHtml(ing.unit)} (${formatMoney(report.total_used_value)})</span>
+      </div>
+    `;
   });
 
   document.querySelectorAll('[data-ingredient-row]').forEach((row) => {
@@ -2081,7 +2275,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // เผื่อ debug ผ่าน browser devtools console (เช่น window.__app.db.daily_entries.toArray())
-window.__app = { db, getSetting, setSetting };
+window.__app = { db, getSetting, setSetting, listOverdueStockCounts, recordPurchase, recordStockCount };
 
 // ------------------------------------------------------------
 // Boot

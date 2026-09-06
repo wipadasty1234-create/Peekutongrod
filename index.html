@@ -273,8 +273,6 @@ db.version(1).stores({
   ingredients: 'id, name, category, is_active, count_frequency',
   ingredient_purchases: 'id, ingredient_id, purchase_date',
   ingredient_stock_counts: 'id, ingredient_id, count_date, [ingredient_id+count_date]',
-  menu_item_ingredients: 'id, menu_item_id, ingredient_id, [menu_item_id+ingredient_id]',
-  cost_references: 'id, target_type, target_id, [target_type+target_id]',
 
   // ---------- 4) การเงิน ----------
   operating_expenses: 'id, name, is_active, frequency',
@@ -356,6 +354,7 @@ async function upsertDailyEntry(input) {
     takeaway_total = 0,
     takeaway_count = 0,
     is_closed = false,
+    actual_revenue = null,
     note = null,
     recorded_by = null,
     adult_package_name = 'ผู้ใหญ่',
@@ -402,6 +401,7 @@ async function upsertDailyEntry(input) {
         takeaway_total,
         takeaway_count,
         is_closed,
+        actual_revenue,
         note,
         recorded_by,
         created_at: existing ? existing.created_at : nowIso(),
@@ -507,90 +507,62 @@ async function buildDailySnapshot(entry_date) {
 // ---------------------------------------------------------------------------
 
 async function recordPurchase({ ingredient_id, purchase_date, quantity, unit_cost, recorded_by = null }) {
-  return db.transaction('rw', db.ingredients, db.ingredient_purchases, async () => {
-    const ingredient = await db.ingredients.get(ingredient_id);
-    if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
+  const ingredient = await db.ingredients.get(ingredient_id);
+  if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
 
-    const stock_before = ingredient.current_stock || 0;
-    const avg_cost_before = ingredient.current_avg_cost || 0;
-    const total_cost = quantity * unit_cost;
-    const stock_after = stock_before + quantity;
-    const avg_cost_after =
-      stock_after > 0 ? (stock_before * avg_cost_before + quantity * unit_cost) / stock_after : unit_cost;
+  const record = {
+    id: uuid(),
+    ingredient_id,
+    purchase_date,
+    quantity,
+    unit_cost,
+    total_cost: quantity * unit_cost,
+    // ค่า derived เหล่านี้จะถูกคำนวณจริงโดย recalculateIngredientLedger ด้านล่างทันที
+    // (ใส่ไว้เผื่อ read ก่อน recalculate เสร็จ)
+    stock_before: 0,
+    avg_cost_before: 0,
+    avg_cost_after: unit_cost,
+    recorded_by,
+    created_at: nowIso(),
+  };
+  await db.ingredient_purchases.add(record);
+  await recalculateIngredientLedger(ingredient_id);
+  return db.ingredient_purchases.get(record.id);
+}
 
-    const record = {
-      id: uuid(),
-      ingredient_id,
-      purchase_date,
-      quantity,
-      unit_cost,
-      total_cost,
-      stock_before,
-      avg_cost_before,
-      avg_cost_after,
-      recorded_by,
-      created_at: nowIso(),
-    };
-    await db.ingredient_purchases.add(record);
-
-    await db.ingredients.update(ingredient_id, {
-      current_stock: stock_after,
-      current_avg_cost: avg_cost_after,
-    });
-
-    return record;
+/** แก้ไขรายการซื้อเก่า (เช่น พิมพ์จำนวน/ราคาผิด) — คำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ทั้งหมด */
+async function updatePurchase(purchase_id, changes) {
+  const purchase = await db.ingredient_purchases.get(purchase_id);
+  if (!purchase) throw new Error('ไม่พบรายการซื้อนี้');
+  const next = { ...purchase, ...changes };
+  await db.ingredient_purchases.update(purchase_id, {
+    ...changes,
+    total_cost: next.quantity * next.unit_cost,
   });
+  const result = await recalculateIngredientLedger(purchase.ingredient_id);
+  return { ...result, purchase: await db.ingredient_purchases.get(purchase_id) };
+}
+
+/** ลบรายการซื้อเก่า — คำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ทั้งหมด */
+async function removePurchase(purchase_id) {
+  const purchase = await db.ingredient_purchases.get(purchase_id);
+  if (!purchase) throw new Error('ไม่พบรายการซื้อนี้');
+  await db.ingredient_purchases.delete(purchase_id);
+  return recalculateIngredientLedger(purchase.ingredient_id);
 }
 
 /**
- * แก้ไข/ลบรายการซื้อเก่า ต้อง cascade recalculate ทุกรายการที่เกิดหลังจากนั้น
- * (ตามคำเตือนในเอกสารข้อ 4 — ingredient_purchases)
- * v1 note: recalculate เฉพาะ chain ของ ingredient_purchases เท่านั้น
- * ยังไม่รวม interleave กับ ingredient_stock_counts ในการคำนวณ current_stock แบบละเอียด
+ * คำนวณใหม่ทั้ง "สาย" ของวัตถุดิบตัวหนึ่ง — ทั้งรายการซื้อ (ต้นทุนเฉลี่ยถ่วงน้ำหนัก)
+ * และรายการนับสต็อกทุกครั้ง (opening/purchased/used_qty/used_value) ตามลำดับวันที่จริง
+ * แล้วไล่ regenerate daily_summary ของทุกวันที่ COGS เปลี่ยนไป
+ *
+ * ต้องเรียกฟังก์ชันนี้ทุกครั้งที่มีการ เพิ่ม/แก้ไข/ลบ รายการซื้อ หรือรายการนับสต็อก
+ * เพื่อรองรับกรณี "นับย้อนหลัง" หรือ "แก้ไขรายการซื้อเก่า" ที่จะกระทบตัวเลขของวันถัดๆ ไปด้วย
+ * (ก่อนหน้านี้ recalculatePurchaseChain รีคำนวณเฉพาะรายการซื้อ ไม่แตะรายการนับสต็อกเลย
+ *  ทำให้ถ้าแก้ไขข้อมูลย้อนหลัง ตัวเลข COGS/กำไรของวันหลังจากนั้นจะค้างเป็นค่าเก่าที่ผิด)
  */
-async function recalculatePurchaseChain(ingredient_id) {
-  return db.transaction('rw', db.ingredients, db.ingredient_purchases, async () => {
-    const purchases = await db.ingredient_purchases
-      .where('ingredient_id')
-      .equals(ingredient_id)
-      .sortBy('purchase_date');
-
-    let runningStock = 0;
-    let runningAvgCost = 0;
-
-    for (const p of purchases) {
-      const stock_before = runningStock;
-      const avg_cost_before = runningAvgCost;
-      const stock_after = stock_before + p.quantity;
-      const avg_cost_after =
-        stock_after > 0 ? (stock_before * avg_cost_before + p.quantity * p.unit_cost) / stock_after : p.unit_cost;
-
-      await db.ingredient_purchases.update(p.id, {
-        stock_before,
-        avg_cost_before,
-        avg_cost_after,
-        total_cost: p.quantity * p.unit_cost,
-      });
-
-      runningStock = stock_after;
-      runningAvgCost = avg_cost_after;
-    }
-
-    await db.ingredients.update(ingredient_id, {
-      current_stock: runningStock,
-      current_avg_cost: runningAvgCost,
-    });
-
-    return { current_stock: runningStock, current_avg_cost: runningAvgCost };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 3) วัตถุดิบ — นับสต็อกปิดร้าน (ตัวกำหนด COGS จริง)
-// ---------------------------------------------------------------------------
-
-async function recordStockCount({ ingredient_id, count_date, closing_count, recorded_by = null }) {
-  return db.transaction(
+async function recalculateIngredientLedger(ingredient_id) {
+  const { current_stock, current_avg_cost, affected_count_dates } = await db.transaction(
     'rw',
     db.ingredients,
     db.ingredient_purchases,
@@ -599,66 +571,135 @@ async function recordStockCount({ ingredient_id, count_date, closing_count, reco
       const ingredient = await db.ingredients.get(ingredient_id);
       if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
 
-      const priorCounts = await db.ingredient_stock_counts
-        .where('ingredient_id')
-        .equals(ingredient_id)
-        .and((c) => c.count_date < count_date)
-        .sortBy('count_date');
-      const lastCount = priorCounts.length ? priorCounts[priorCounts.length - 1] : null;
+      // 1) รีคำนวณสายการซื้อ (weighted average cost) ตามลำดับวันที่ซื้อจริง
+      const purchases = await db.ingredient_purchases.where('ingredient_id').equals(ingredient_id).sortBy('purchase_date');
+      let runningStock = 0;
+      let runningAvgCost = 0;
+      const recalcedPurchases = [];
+      for (const p of purchases) {
+        const stock_before = runningStock;
+        const avg_cost_before = runningAvgCost;
+        const stock_after = stock_before + p.quantity;
+        const avg_cost_after =
+          stock_after > 0 ? (stock_before * avg_cost_before + p.quantity * p.unit_cost) / stock_after : p.unit_cost;
+        const updated = { ...p, stock_before, avg_cost_before, avg_cost_after, total_cost: p.quantity * p.unit_cost };
+        await db.ingredient_purchases.update(p.id, {
+          stock_before,
+          avg_cost_before,
+          avg_cost_after,
+          total_cost: updated.total_cost,
+        });
+        recalcedPurchases.push(updated);
+        runningStock = stock_after;
+        runningAvgCost = avg_cost_after;
+      }
 
-      const opening_stock = lastCount ? lastCount.closing_count : 0;
-      const rangeStart = lastCount ? lastCount.count_date : null;
+      // 2) รีคำนวณรายการนับสต็อกทุกครั้งตามลำดับวันที่นับจริง โดยอิงข้อมูลซื้อที่รีคำนวณสดๆ ด้านบน
+      const counts = await db.ingredient_stock_counts.where('ingredient_id').equals(ingredient_id).sortBy('count_date');
+      let lastClosing = 0;
+      let lastCountDate = null;
+      const affectedDates = [];
+      for (const c of counts) {
+        const opening_stock = lastClosing;
+        const purchasesInRange = recalcedPurchases.filter(
+          (p) => (lastCountDate === null || p.purchase_date > lastCountDate) && p.purchase_date <= c.count_date
+        );
+        const purchased_qty = purchasesInRange.reduce((sum, p) => sum + p.quantity, 0);
+        const used_qty = opening_stock + purchased_qty - c.closing_count;
 
-      const purchasesInRange = await db.ingredient_purchases
-        .where('ingredient_id')
-        .equals(ingredient_id)
-        .and((p) => (rangeStart === null || p.purchase_date > rangeStart) && p.purchase_date <= count_date)
-        .toArray();
-      const purchased_qty = purchasesInRange.reduce((sum, p) => sum + p.quantity, 0);
+        const purchasesUpToDate = recalcedPurchases.filter((p) => p.purchase_date <= c.count_date);
+        const avgCostAtCount =
+          purchasesUpToDate.length > 0
+            ? purchasesUpToDate[purchasesUpToDate.length - 1].avg_cost_after
+            : ingredient.current_avg_cost || 0;
+        const used_value = used_qty * avgCostAtCount;
 
-      const used_qty = opening_stock + purchased_qty - closing_count;
+        const isChanged =
+          c.opening_stock !== opening_stock ||
+          c.purchased_qty !== purchased_qty ||
+          c.used_qty !== used_qty ||
+          Math.abs((c.used_value || 0) - used_value) > 1e-9;
 
-      // avg cost ล่าสุด ณ วันนับ (ใช้ purchase ล่าสุดที่ <= count_date, fallback = current_avg_cost)
-      const purchasesUpToDate = await db.ingredient_purchases
-        .where('ingredient_id')
-        .equals(ingredient_id)
-        .and((p) => p.purchase_date <= count_date)
-        .sortBy('purchase_date');
-      const avgCostAtCount =
-        purchasesUpToDate.length > 0
-          ? purchasesUpToDate[purchasesUpToDate.length - 1].avg_cost_after
-          : ingredient.current_avg_cost || 0;
+        await db.ingredient_stock_counts.update(c.id, { opening_stock, purchased_qty, used_qty, used_value });
+        if (isChanged) affectedDates.push(c.count_date);
 
-      const used_value = used_qty * avgCostAtCount;
+        lastClosing = c.closing_count;
+        lastCountDate = c.count_date;
+      }
 
-      const record = {
-        id: uuid(),
-        ingredient_id,
-        count_date,
-        opening_stock,
-        purchased_qty,
-        closing_count,
-        used_qty,
-        used_value,
-        recorded_by,
-        created_at: nowIso(),
-      };
+      // 3) ปรับ cache current_stock/current_avg_cost ให้อิง "ยอดนับจริงล่าสุด" เป็นหลัก
+      //    บวกด้วยของที่ซื้อเข้ามาหลังจากวันนับล่าสุดที่ยังไม่ถูกนับ (ไม่ใช่ผลรวมการซื้อล้วนๆ แบบเดิม
+      //    ซึ่งจะเพี้ยนไปจากความเป็นจริงทันทีที่มีการนับสต็อกอย่างน้อยหนึ่งครั้ง)
+      const purchasesAfterLastCount = recalcedPurchases.filter(
+        (p) => lastCountDate === null || p.purchase_date > lastCountDate
+      );
+      const current_stock = lastClosing + purchasesAfterLastCount.reduce((sum, p) => sum + p.quantity, 0);
+      const current_avg_cost = runningAvgCost;
 
-      // unique (ingredient_id, count_date) — ถ้ามีอยู่แล้วให้ทับ (put)
-      const existing = await db.ingredient_stock_counts
-        .where('[ingredient_id+count_date]')
-        .equals([ingredient_id, count_date])
-        .first();
-      if (existing) record.id = existing.id;
+      await db.ingredients.update(ingredient_id, { current_stock, current_avg_cost });
 
-      await db.ingredient_stock_counts.put(record);
-
-      // cache current_stock อัปเดตเป็นยอดนับจริงล่าสุด
-      await db.ingredients.update(ingredient_id, { current_stock: closing_count });
-
-      return record;
+      return { current_stock, current_avg_cost, affected_count_dates: affectedDates };
     }
   );
+
+  // regenerate daily_summary ของทุกวันที่ COGS เปลี่ยนไป — ทำนอก transaction ข้างบน
+  // เพราะ generateDailySummary ต้องอ่านตารางอื่น (menu_items, menu_categories, operating_expenses ฯลฯ)
+  // ที่ไม่ได้อยู่ใน scope ของ transaction นี้
+  for (const date of affected_count_dates) {
+    await generateDailySummary(date);
+  }
+
+  return { current_stock, current_avg_cost, affected_count_dates };
+}
+
+// ---------------------------------------------------------------------------
+// 3) วัตถุดิบ — นับสต็อกปิดร้าน (ตัวกำหนด COGS จริง)
+// ---------------------------------------------------------------------------
+
+async function recordStockCount({ ingredient_id, count_date, closing_count, recorded_by = null }) {
+  const ingredient = await db.ingredients.get(ingredient_id);
+  if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
+
+  const existing = await db.ingredient_stock_counts
+    .where('[ingredient_id+count_date]')
+    .equals([ingredient_id, count_date])
+    .first();
+
+  const record = {
+    id: existing ? existing.id : uuid(),
+    ingredient_id,
+    count_date,
+    closing_count,
+    // ค่า derived เหล่านี้จะถูกคำนวณจริงโดย recalculateIngredientLedger ด้านล่างทันที
+    // (คำนวณตรงนี้แบบตรงไปตรงมาก่อน เผื่อ read ก่อน recalculate เสร็จ — จะถูกต่อด้วยค่าที่ถูกต้องเสมอ)
+    opening_stock: 0,
+    purchased_qty: 0,
+    used_qty: 0,
+    used_value: 0,
+    recorded_by,
+    created_at: existing ? existing.created_at : nowIso(),
+  };
+  await db.ingredient_stock_counts.put(record);
+  await recalculateIngredientLedger(ingredient_id);
+  return db.ingredient_stock_counts.get(record.id);
+}
+
+/** แก้ไขรายการนับสต็อกเก่า (เช่น พิมพ์ตัวเลขผิด หรือนับย้อนหลังแทรกวันที่เก่ากว่า)
+ *  คำนวณ COGS ของทุกวันตั้งแต่วันนั้นเป็นต้นไปใหม่ทั้งหมด ผ่าน recalculateIngredientLedger */
+async function updateStockCount(count_id, changes) {
+  const count = await db.ingredient_stock_counts.get(count_id);
+  if (!count) throw new Error('ไม่พบรายการนับสต็อกนี้');
+  await db.ingredient_stock_counts.update(count_id, changes);
+  const result = await recalculateIngredientLedger(count.ingredient_id);
+  return { ...result, count: await db.ingredient_stock_counts.get(count_id) };
+}
+
+/** ลบรายการนับสต็อกเก่า — คำนวณ COGS ของทุกวันหลังจากนั้นใหม่ทั้งหมด */
+async function removeStockCount(count_id) {
+  const count = await db.ingredient_stock_counts.get(count_id);
+  if (!count) throw new Error('ไม่พบรายการนับสต็อกนี้');
+  await db.ingredient_stock_counts.delete(count_id);
+  return recalculateIngredientLedger(count.ingredient_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -707,19 +748,28 @@ async function generateDailySummary(summary_date) {
   const packaging_cost = packagingFee * (entry.takeaway_count || 0);
 
   // ค่าใช้จ่ายประจำแบบ accrual (เฉลี่ย/วัน) จาก operating_expenses ที่ active ณ วันนี้
+  // ยกเว้นแบบ 'once' (เช่น ค่าแก๊สหุงต้มที่เติมไม่สม่ำเสมอ, ค่าซ่อมบำรุงเฉพาะครั้ง) จะลงเต็มจำนวนเฉพาะวันที่ระบุวันเดียว ไม่หารเฉลี่ย
   const activeExpenses = (await db.operating_expenses.toArray()).filter((e) => {
     if (!e.is_active) return false;
+    if (e.frequency === 'once') return e.start_date === summary_date;
     if (e.start_date && e.start_date > summary_date) return false;
     if (e.end_date && e.end_date < summary_date) return false;
     return true;
   });
   const operating_expense = activeExpenses.reduce((sum, e) => {
+    if (e.frequency === 'once') return sum + e.amount;
     const divisor = e.frequency === 'weekly' ? 7 : 30;
     return sum + e.amount / divisor;
   }, 0);
 
-  const net_profit =
-    sales_buffet + sales_ala_carte + sales_takeaway + sales_addon - cogs - packaging_cost - operating_expense;
+  // "รายรับจริง" (ถ้ากรอกไว้) ใช้เป็นฐานคำนวณกำไรจริงแทนยอดตามระบบ เพื่อสะท้อนเงินสด/โอนที่นับได้จริง
+  // (ครอบคลุมส่วนต่างจากส่วนลด/แถม/นับผิด/เงินขาดที่ไม่ได้ถูกบันทึกเป็นรายการแยก)
+  const calculated_revenue = sales_buffet + sales_ala_carte + sales_takeaway + sales_addon;
+  const actual_revenue = entry.actual_revenue != null ? entry.actual_revenue : null;
+  const revenue_variance = actual_revenue != null ? actual_revenue - calculated_revenue : null;
+  const revenue_for_profit = actual_revenue != null ? actual_revenue : calculated_revenue;
+
+  const net_profit = revenue_for_profit - cogs - packaging_cost - operating_expense;
 
   const record = {
     id: uuid(),
@@ -730,6 +780,9 @@ async function generateDailySummary(summary_date) {
     sales_ala_carte,
     sales_takeaway,
     sales_addon,
+    calculated_revenue,
+    actual_revenue,
+    revenue_variance,
     cogs,
     packaging_cost,
     operating_expense,
@@ -749,8 +802,11 @@ async function generateDailySummary(summary_date) {
  * บันทึกวันแบบ estimated (ก่อนเปิดระบบ/ข้อมูลไม่ครบ) — กรอกยอดรวมตรงๆ ไม่ผ่าน daily_entries
  * ฟังก์ชันนี้จะไม่ถูก generateDailySummary() เขียนทับ เพราะไม่มี daily_entries รองรับ
  */
-async function upsertEstimatedDailySummary({ summary_date, sales_buffet = 0, sales_ala_carte = 0, sales_takeaway = 0, sales_addon = 0, cogs = 0, packaging_cost = 0, operating_expense = 0, note = null }) {
-  const net_profit = sales_buffet + sales_ala_carte + sales_takeaway + sales_addon - cogs - packaging_cost - operating_expense;
+async function upsertEstimatedDailySummary({ summary_date, sales_buffet = 0, sales_ala_carte = 0, sales_takeaway = 0, sales_addon = 0, actual_revenue = null, cogs = 0, packaging_cost = 0, operating_expense = 0, note = null }) {
+  const calculated_revenue = sales_buffet + sales_ala_carte + sales_takeaway + sales_addon;
+  const revenue_variance = actual_revenue != null ? actual_revenue - calculated_revenue : null;
+  const revenue_for_profit = actual_revenue != null ? actual_revenue : calculated_revenue;
+  const net_profit = revenue_for_profit - cogs - packaging_cost - operating_expense;
   const existing = await db.daily_summary.where('summary_date').equals(summary_date).first();
   const record = {
     id: existing ? existing.id : uuid(),
@@ -760,6 +816,9 @@ async function upsertEstimatedDailySummary({ summary_date, sales_buffet = 0, sal
     sales_ala_carte,
     sales_takeaway,
     sales_addon,
+    calculated_revenue,
+    actual_revenue,
+    revenue_variance,
     cogs,
     packaging_cost,
     operating_expense,
@@ -876,19 +935,17 @@ async function listMenuItems({ item_type = null, activeOnly = false } = {}) {
   return all;
 }
 
-/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน daily_addon_sales หรือ menu_item_ingredients เลย
- *  (ตามกติกาเอกสารข้อ 8.2 ข้อ "เมนู/วัตถุดิบ") — ถ้าเคยขายไปแล้วต้อง soft-delete แทน */
+/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน daily_addon_sales เลย — ถ้าเคยขายไปแล้วต้อง soft-delete แทน */
 async function removeMenuItem(id) {
   const referencedInSales = await db.daily_addon_sales.where('menu_item_id').equals(id).count();
-  const referencedInIngredients = await db.menu_item_ingredients.where('menu_item_id').equals(id).count();
 
-  if (referencedInSales > 0 || referencedInIngredients > 0) {
+  if (referencedInSales > 0) {
     await db.menu_items.update(id, { is_active: false, updated_at: nowIso() });
     return {
       id,
       deleted: false,
       deactivated: true,
-      reason: `ถูกอ้างอิงในยอดขาย (${referencedInSales}) หรือสูตรวัตถุดิบ (${referencedInIngredients}) แล้ว`,
+      reason: `ถูกอ้างอิงในยอดขาย (${referencedInSales}) แล้ว`,
     };
   }
   await db.menu_items.delete(id);
@@ -938,20 +995,19 @@ async function listIngredients({ activeOnly = false } = {}) {
   return activeOnly ? all.filter((i) => i.is_active) : all;
 }
 
-/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน ingredient_purchases, ingredient_stock_counts,
- *  หรือ menu_item_ingredients เลย — มิฉะนั้น soft-delete (ตามกติกาเอกสารข้อ 8.2) */
+/** ลบได้จริงเฉพาะถ้าไม่เคยถูกอ้างอิงใน ingredient_purchases หรือ ingredient_stock_counts เลย
+ *  มิฉะนั้น soft-delete */
 async function removeIngredient(id) {
   const referencedInPurchases = await db.ingredient_purchases.where('ingredient_id').equals(id).count();
   const referencedInCounts = await db.ingredient_stock_counts.where('ingredient_id').equals(id).count();
-  const referencedInMenus = await db.menu_item_ingredients.where('ingredient_id').equals(id).count();
 
-  if (referencedInPurchases > 0 || referencedInCounts > 0 || referencedInMenus > 0) {
+  if (referencedInPurchases > 0 || referencedInCounts > 0) {
     await db.ingredients.update(id, { is_active: false });
     return {
       id,
       deleted: false,
       deactivated: true,
-      reason: `ถูกอ้างอิงใน purchases(${referencedInPurchases}) / stock_counts(${referencedInCounts}) / menu_item_ingredients(${referencedInMenus})`,
+      reason: `ถูกอ้างอิงใน purchases(${referencedInPurchases}) / stock_counts(${referencedInCounts})`,
     };
   }
   await db.ingredients.delete(id);
@@ -1016,10 +1072,23 @@ async function listIngredientsUncountedToday(checkDate = new Date().toISOString(
 // --- operating_expenses ---
 
 async function createOperatingExpense({ name, amount, frequency, start_date, end_date = null }) {
-  if (!['monthly', 'weekly'].includes(frequency)) {
-    throw new Error(`frequency ต้องเป็น 'monthly' หรือ 'weekly' เท่านั้น (ได้ '${frequency}')`);
+  if (!['monthly', 'weekly', 'once'].includes(frequency)) {
+    throw new Error(`frequency ต้องเป็น 'monthly', 'weekly' หรือ 'once' เท่านั้น (ได้ '${frequency}')`);
   }
-  const record = { id: uuid(), name, amount, frequency, start_date, end_date, is_active: true };
+  if (frequency === 'once' && !start_date) {
+    throw new Error('ค่าใช้จ่ายแบบครั้งเดียวต้องระบุวันที่');
+  }
+  // ค่าใช้จ่ายครั้งเดียว (เช่น แก๊สหุงต้ม, ค่าซ่อมบำรุงเฉพาะครั้ง) ไม่ใช่รายการ accrual ต่อเนื่อง
+  // จึงล็อก end_date = start_date เสมอ เพื่อให้เต็มจำนวนตกอยู่วันเดียวเท่านั้น ไม่เผลอไหลต่อเนื่องไม่มีที่สิ้นสุด
+  const record = {
+    id: uuid(),
+    name,
+    amount,
+    frequency,
+    start_date,
+    end_date: frequency === 'once' ? start_date : end_date,
+    is_active: true,
+  };
   await db.operating_expenses.add(record);
   return record;
 }
@@ -1082,102 +1151,20 @@ async function getExpensePaymentsRange(fromDate, toDate) {
 }
 
 // ---------------------------------------------------------------------------
-// 5c) menu_item_ingredients — เชื่อมโยงเมนู↔วัตถุดิบแบบหลวมๆ
-// ---------------------------------------------------------------------------
-// หมายเหตุ: ใช้เพื่อ "แจ้งเตือน" เท่านั้น (เช่น เมนูนี้อาจได้รับผลกระทบถ้าวัตถุดิบใกล้หมด)
-// ไม่ได้ใช้คำนวณต้นทุนจริงเป็นสูตรตายตัว เพราะร้านไม่มีสูตรที่แน่นอน (ดู database-design-tuadueng.md)
-
-async function linkMenuItemIngredient({ menu_item_id, ingredient_id, note = null }) {
-  const menuItem = await db.menu_items.get(menu_item_id);
-  if (!menuItem) throw new Error(`ไม่พบ menu_item_id: ${menu_item_id}`);
-  const ingredient = await db.ingredients.get(ingredient_id);
-  if (!ingredient) throw new Error(`ไม่พบ ingredient_id: ${ingredient_id}`);
-
-  const existing = await db.menu_item_ingredients
-    .where('[menu_item_id+ingredient_id]')
-    .equals([menu_item_id, ingredient_id])
-    .first();
-  if (existing) {
-    await db.menu_item_ingredients.update(existing.id, { note });
-    return db.menu_item_ingredients.get(existing.id);
-  }
-
-  const record = { id: uuid(), menu_item_id, ingredient_id, note };
-  await db.menu_item_ingredients.add(record);
-  return record;
-}
-
-async function unlinkMenuItemIngredient(menu_item_id, ingredient_id) {
-  const existing = await db.menu_item_ingredients
-    .where('[menu_item_id+ingredient_id]')
-    .equals([menu_item_id, ingredient_id])
-    .first();
-  if (!existing) return { deleted: false, reason: 'ไม่พบความเชื่อมโยงนี้อยู่แล้ว' };
-  await db.menu_item_ingredients.delete(existing.id);
-  return { deleted: true };
-}
-
-/** วัตถุดิบทั้งหมดที่อาจเกี่ยวข้องกับเมนูนี้ */
-async function listIngredientsForMenuItem(menu_item_id) {
-  const links = await db.menu_item_ingredients.where('menu_item_id').equals(menu_item_id).toArray();
-  const ingredients = await Promise.all(links.map((l) => db.ingredients.get(l.ingredient_id)));
-  return ingredients.filter(Boolean);
-}
-
-/** ใช้ตอบคำถาม "วัตถุดิบนี้ใกล้หมด จะกระทบเมนูอะไรบ้าง" สำหรับหน้าแจ้งเตือน */
-async function listMenuItemsUsingIngredient(ingredient_id) {
-  const links = await db.menu_item_ingredients.where('ingredient_id').equals(ingredient_id).toArray();
-  const menuItems = await Promise.all(links.map((l) => db.menu_items.get(l.menu_item_id)));
-  return menuItems.filter(Boolean);
-}
-
-// ---------------------------------------------------------------------------
-// 5d) cost_references — ต้นทุนอ้างอิง (กรอกมือ ไม่ใช่คำนวณอัตโนมัติ)
-// ---------------------------------------------------------------------------
-
-/** สร้าง/แก้ไขต้นทุนอ้างอิงของ buffet_package หรือ menu_item (upsert ตาม target_type+target_id) */
-async function upsertCostReference({ target_type, target_id, estimated_cost, note = null }) {
-  if (!['buffet_package', 'menu_item'].includes(target_type)) {
-    throw new Error(`target_type ต้องเป็น 'buffet_package' หรือ 'menu_item' เท่านั้น (ได้ '${target_type}')`);
-  }
-  const targetTable = target_type === 'buffet_package' ? db.buffet_packages : db.menu_items;
-  const target = await targetTable.get(target_id);
-  if (!target) throw new Error(`ไม่พบ ${target_type} id: ${target_id}`);
-
-  const existing = await db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
-  const record = {
-    id: existing ? existing.id : uuid(),
-    target_type,
-    target_id,
-    estimated_cost,
-    note,
-    updated_at: nowIso(),
-  };
-  await db.cost_references.put(record);
-  return record;
-}
-
-async function getCostReference(target_type, target_id) {
-  return db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
-}
-
-async function listCostReferences({ target_type = null } = {}) {
-  const all = await db.cost_references.toArray();
-  return target_type ? all.filter((c) => c.target_type === target_type) : all;
-}
-
-async function removeCostReference(target_type, target_id) {
-  const existing = await db.cost_references.where('[target_type+target_id]').equals([target_type, target_id]).first();
-  if (!existing) return { deleted: false, reason: 'ไม่พบต้นทุนอ้างอิงนี้อยู่แล้ว' };
-  await db.cost_references.delete(existing.id);
-  return { deleted: true };
-}
-
-// ---------------------------------------------------------------------------
 // 7) Reporting — query แบบสรุป/จัดกลุ่ม สำหรับหน้ารายงาน
 // ---------------------------------------------------------------------------
 
 /** สรุปยอดรวมทั้งช่วง (การ์ดตัวเลขบนหน้ารายงาน) — รวม transactional + estimated ปนกัน */
+/** รายรับที่ควรใช้จริงของวันนั้น — ใช้ "รายรับจริง" ถ้ามีการกรอกไว้ ไม่งั้น fallback ไปใช้ยอดตามระบบ
+ *  ใช้จุดนี้จุดเดียวทั่วทั้งแอป เพื่อไม่ให้แต่ละหน้าคิดรายรับไม่ตรงกัน */
+function effectiveRevenue(summaryRow) {
+  const calc =
+    summaryRow.calculated_revenue != null
+      ? summaryRow.calculated_revenue
+      : (summaryRow.sales_buffet || 0) + (summaryRow.sales_ala_carte || 0) + (summaryRow.sales_takeaway || 0) + (summaryRow.sales_addon || 0);
+  return summaryRow.actual_revenue != null ? summaryRow.actual_revenue : calc;
+}
+
 async function getSalesReport(fromDate, toDate) {
   const rows = await getDailySummaryRange(fromDate, toDate);
 
@@ -1191,9 +1178,14 @@ async function getSalesReport(fromDate, toDate) {
       acc.packaging_cost += r.packaging_cost || 0;
       acc.operating_expense += r.operating_expense || 0;
       acc.net_profit += r.net_profit || 0;
+      if (r.revenue_variance != null) {
+        acc.total_variance += r.revenue_variance;
+        acc.days_with_actual_revenue += 1;
+      }
+      if (r.actual_revenue != null) acc.total_actual_revenue += r.actual_revenue;
       return acc;
     },
-    { sales_buffet: 0, sales_ala_carte: 0, sales_takeaway: 0, sales_addon: 0, cogs: 0, packaging_cost: 0, operating_expense: 0, net_profit: 0 }
+    { sales_buffet: 0, sales_ala_carte: 0, sales_takeaway: 0, sales_addon: 0, cogs: 0, packaging_cost: 0, operating_expense: 0, net_profit: 0, total_actual_revenue: 0, total_variance: 0, days_with_actual_revenue: 0 }
   );
   totals.total_revenue = totals.sales_buffet + totals.sales_ala_carte + totals.sales_takeaway + totals.sales_addon;
 
@@ -1262,6 +1254,7 @@ async function getMonthlyBreakdown(fromDate, toDate) {
         sales_ala_carte: 0,
         sales_takeaway: 0,
         sales_addon: 0,
+        effective_revenue: 0,
         cogs: 0,
         packaging_cost: 0,
         operating_expense: 0,
@@ -1274,6 +1267,7 @@ async function getMonthlyBreakdown(fromDate, toDate) {
     m.sales_ala_carte += r.sales_ala_carte || 0;
     m.sales_takeaway += r.sales_takeaway || 0;
     m.sales_addon += r.sales_addon || 0;
+    m.effective_revenue += effectiveRevenue(r);
     m.cogs += r.cogs || 0;
     m.packaging_cost += r.packaging_cost || 0;
     m.operating_expense += r.operating_expense || 0;
@@ -1281,6 +1275,46 @@ async function getMonthlyBreakdown(fromDate, toDate) {
   }
 
   return Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/** จัดกลุ่มยอดขาย/กำไรตามวันในสัปดาห์ (อาทิตย์-เสาร์) ในช่วงวันที่ระบุ
+ *  ใช้ช่วยตัดสินใจว่าควรพิจารณาหยุดร้านวันไหน — วันปิดร้านไม่ถูกนับรวม (ไม่มีรายรับให้เทียบ)
+ *  ใช้ "กำไรเฉลี่ย" (ไม่ใช่แค่รายรับ) เป็นตัวชี้วัด เพราะเป็นตัวที่สะท้อนว่าวันนั้นคุ้มเปิดร้านจริงหรือไม่
+ *  ต้องมีข้อมูลอย่างน้อย 2 ครั้งของวันนั้นๆ ถึงจะนับว่าน่าเชื่อถือพอสำหรับคำแนะนำ */
+async function getWeekdayBreakdown(fromDate, toDate) {
+  const rows = await getDailySummaryRange(fromDate, toDate);
+  const WEEKDAY_NAMES = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+
+  const buckets = WEEKDAY_NAMES.map((name, weekday) => ({
+    weekday,
+    name,
+    days_count: 0,
+    total_revenue: 0,
+    total_profit: 0,
+    avg_revenue: 0,
+    avg_profit: 0,
+  }));
+
+  for (const r of rows) {
+    if (r.is_closed) continue;
+    const weekday = new Date(r.summary_date + 'T00:00:00').getDay();
+    const bucket = buckets[weekday];
+    bucket.days_count += 1;
+    bucket.total_revenue += effectiveRevenue(r);
+    bucket.total_profit += r.net_profit || 0;
+  }
+  for (const bucket of buckets) {
+    bucket.avg_revenue = bucket.days_count > 0 ? bucket.total_revenue / bucket.days_count : 0;
+    bucket.avg_profit = bucket.days_count > 0 ? bucket.total_profit / bucket.days_count : 0;
+  }
+
+  const reliableBuckets = buckets.filter((b) => b.days_count >= 2);
+  let suggestion = null;
+  if (reliableBuckets.length >= 3) {
+    suggestion = reliableBuckets.reduce((worst, b) => (b.avg_profit < worst.avg_profit ? b : worst));
+  }
+
+  return { from: fromDate, to: toDate, buckets, suggestion };
 }
 
 /** เมนูขายดี (น้ำ/ขนม) ในช่วงวันที่ระบุ เรียงจากขายมากไปน้อย */
@@ -1306,13 +1340,26 @@ async function getTopSellingAddons(fromDate, toDate, limit = 10) {
   return results.sort((a, b) => b.total_quantity - a.total_quantity).slice(0, limit);
 }
 
-/** สรุปยอดจ่ายจริง (cash) แยกตามหมวด category ในช่วงวันที่ระบุ */
+/** สรุปยอดจ่ายจริง (cash) แยกตามหมวดหมู่ในช่วงวันที่ระบุ
+ *  รวมทั้ง 2 แหล่ง: (1) expense_payments ที่กรอกเองในหน้า "การเงิน" (ค่าเช่า/ค่าแรง/ซ่อมบำรุง ฯลฯ)
+ *  และ (2) ยอดซื้อวัตถุดิบจาก ingredient_purchases — ดึงมาให้อัตโนมัติ ไม่ต้องไปกรอกซ้ำในหน้าการเงินอีก
+ *  (ไม่กระทบ COGS ในกำไรขาดทุนหลัก ซึ่งคิดจากการนับสต๊อกแยกต่างหากอยู่แล้ว รายงานนี้มีไว้ดูภาพรวม "เงินสดที่จ่ายออกจริง" เท่านั้น) */
 async function getExpenseBreakdown(fromDate, toDate) {
   const rows = await getExpensePaymentsRange(fromDate, toDate);
   const byCategory = {};
   for (const r of rows) {
     byCategory[r.category] = (byCategory[r.category] || 0) + r.amount;
   }
+
+  const purchases = await db.ingredient_purchases
+    .where('purchase_date')
+    .between(fromDate, toDate, true, true)
+    .toArray();
+  const purchaseTotal = purchases.reduce((sum, p) => sum + p.total_cost, 0);
+  if (purchaseTotal > 0) {
+    byCategory['วัตถุดิบ (ซื้อเข้า)'] = (byCategory['วัตถุดิบ (ซื้อเข้า)'] || 0) + purchaseTotal;
+  }
+
   return Object.entries(byCategory)
     .map(([category, total_amount]) => ({ category, total_amount }))
     .sort((a, b) => b.total_amount - a.total_amount);
@@ -1349,8 +1396,20 @@ async function exportAllData() {
 }
 
 async function importAllData(payload) {
+  if (!payload || typeof payload !== 'object' || !payload.tables || typeof payload.tables !== 'object') {
+    throw new Error('ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลที่ถูกต้อง (ไม่พบโครงสร้าง tables)');
+  }
   const { tables } = payload;
-  return db.transaction('rw', db.tables, async () => {
+
+  // กันเหตุไฟล์ไม่สมบูรณ์ (เช่น export มาไม่ครบ หรือไฟล์เก่ากว่าที่ยังไม่มีตารางใหม่บางตาราง)
+  // ล้างข้อมูลปัจจุบันทิ้งโดยไม่มีอะไรมาแทน — เตือนไว้ก่อนแทนที่จะเงียบแล้วข้อมูลหาย
+  const currentTableNames = db.tables.map((t) => t.name);
+  const missingTables = currentTableNames.filter((name) => !(name in tables));
+  if (missingTables.length === currentTableNames.length) {
+    throw new Error('ไฟล์นี้ไม่มีข้อมูลตารางใดตรงกับระบบเลย ยกเลิกการ import เพื่อความปลอดภัย');
+  }
+
+  await db.transaction('rw', db.tables, async () => {
     for (const table of db.tables) {
       await table.clear();
       const rows = tables[table.name];
@@ -1359,6 +1418,8 @@ async function importAllData(payload) {
       }
     }
   });
+
+  return { imported_tables: currentTableNames.filter((n) => n in tables), missing_tables: missingTables };
 }
 
 
@@ -1526,6 +1587,33 @@ function buildRevenueExpenseChartSvg(totalRevenue, totalExpense) {
     </svg>`;
 }
 
+function buildWeekdayChartSvg(buckets) {
+  const maxVal = Math.max(...buckets.map((b) => Math.abs(b.avg_profit)), 1);
+  const barW = 24;
+  const gap = 6;
+  const chartH = 90;
+  const baseY = 100;
+  const totalW = buckets.length * (barW + gap) + gap;
+  const bars = buckets
+    .map((b, i) => {
+      const x = gap + i * (barW + gap);
+      const h = maxVal > 0 ? (Math.abs(b.avg_profit) / maxVal) * chartH : 0;
+      const y = b.avg_profit >= 0 ? baseY - h : baseY;
+      const color = b.days_count === 0 ? 'var(--line)' : b.avg_profit >= 0 ? 'var(--moss)' : 'var(--ember)';
+      return `
+        <rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h, 1)}" rx="3" fill="${color}" />
+        <text x="${x + barW / 2}" y="${baseY + 16}" text-anchor="middle" font-size="10" fill="var(--ink-soft)">${b.name.slice(0, 2)}</text>
+        ${b.days_count > 0 ? `<text x="${x + barW / 2}" y="${b.avg_profit >= 0 ? y - 4 : baseY + h + 12}" text-anchor="middle" font-size="9" fill="var(--ink-soft)">${Math.round(b.avg_profit)}</text>` : ''}
+      `;
+    })
+    .join('');
+  return `
+    <svg viewBox="0 0 ${totalW} 130" style="width:100%;max-width:360px;display:block;margin:0 auto;">
+      <line x1="0" y1="${baseY}" x2="${totalW}" y2="${baseY}" stroke="var(--line)" stroke-width="1" />
+      ${bars}
+    </svg>`;
+}
+
 async function renderDashboard(fromParam, toParam) {
   const today = todayStr();
   const from = fromParam || today;
@@ -1593,6 +1681,10 @@ async function renderDashboard(fromParam, toParam) {
         <div class="row-item"><span class="label">ยอดขายแยกจาน</span><span class="value">${formatMoney(salesReport.totals.sales_ala_carte)}</span></div>
         <div class="row-item"><span class="label">ยอดขายกลับบ้าน</span><span class="value">${formatMoney(salesReport.totals.sales_takeaway)}</span></div>
         <div class="row-item"><span class="label">ยอดขายน้ำ/ขนม</span><span class="value">${formatMoney(salesReport.totals.sales_addon)}</span></div>
+        ${salesReport.totals.days_with_actual_revenue > 0
+          ? `<div class="row-item"><span class="label">รายรับจริงรวม</span><span class="value">${formatMoney(salesReport.totals.total_actual_revenue)}</span></div>
+             <div class="row-item"><span class="label">ส่วนต่างสะสม (จริง − ตามระบบ)</span><span class="value ${salesReport.totals.total_variance >= 0 ? 'profit-pos' : 'profit-neg'}">${salesReport.totals.total_variance >= 0 ? '+' : ''}${formatMoney(salesReport.totals.total_variance)}</span></div>`
+          : ''}
         <div class="row-item"><span class="label">ต้นทุนวัตถุดิบ (COGS)</span><span class="value">${formatMoney(salesReport.totals.cogs)}</span></div>
         <div class="row-item"><span class="label">ค่าถุง</span><span class="value">${formatMoney(salesReport.totals.packaging_cost)}</span></div>
         <div class="row-item"><span class="label">ค่าใช้จ่ายประจำ</span><span class="value">${formatMoney(salesReport.totals.operating_expense)}</span></div>
@@ -1697,8 +1789,16 @@ async function renderEntry(dateStr) {
           <input type="number" id="f-takeaway-total" min="0" inputmode="decimal" value="${entry?.takeaway_total ?? 0}" />
         </div>
         <div class="row-item" style="border-bottom:none;">
-          <span class="label" style="font-weight:700;">ยอดขายรวมโดยประมาณ</span>
+          <span class="label" style="font-weight:700;">ยอดขายรวมตามระบบ</span>
           <span class="value" id="f-grand-total">${formatMoney(grandTotal)}</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="field" style="margin-bottom:0;">
+          <label for="f-actual-revenue">รายรับจริง (เงินสด/โอนที่นับได้จริงตอนปิดร้าน)</label>
+          <input type="number" id="f-actual-revenue" min="0" inputmode="decimal" placeholder="เว้นว่างได้ถ้ายังไม่ได้นับ" value="${entry?.actual_revenue ?? ''}" />
+          <p style="font-size:12px;color:var(--ink-soft);margin:6px 0 0;">ใช้เทียบกับยอดตามระบบด้านบน เพื่อจับส่วนต่างจากส่วนลด/แถม/นับผิด/เงินขาด — กำไรสุทธิของวันจะคำนวณจากช่องนี้แทนถ้ากรอกไว้</p>
         </div>
       </div>
     </div>
@@ -1749,11 +1849,15 @@ async function renderEntry(dateStr) {
     }
 
     try {
+      const actualRevenueRaw = document.getElementById('f-actual-revenue')?.value;
+      const actual_revenue = closed || actualRevenueRaw === '' || actualRevenueRaw == null ? null : Number(actualRevenueRaw);
+
       await upsertDailyEntry({
         entry_date: targetDate,
         is_closed: closed,
         takeaway_total: closed ? 0 : Number(document.getElementById('f-takeaway-total').value) || 0,
         takeaway_count: closed ? 0 : Number(document.getElementById('f-takeaway-count').value) || 0,
+        actual_revenue,
         note,
         recorded_by: (await listShifts())[0]?.id ?? null,
       });
@@ -1776,15 +1880,22 @@ async function renderEntry(dateStr) {
       }
 
       const summary = await db.daily_summary.where('summary_date').equals(targetDate).first();
+      const variance = summary?.revenue_variance;
+      const varianceRowHtml = summary && variance != null
+        ? `<div class="row-item"><span class="label">รายรับจริง</span><span class="value">${formatMoney(summary.actual_revenue)}</span></div>
+           <div class="row-item"><span class="label">ส่วนต่าง (จริง − ตามระบบ)</span><span class="value ${variance >= 0 ? 'profit-pos' : 'profit-neg'}">${variance >= 0 ? '+' : ''}${formatMoney(variance)}</span></div>`
+        : '';
+
       document.getElementById('entry-result').innerHTML = summary
         ? `<div class="card">
              <h2>สรุปวันที่ ${targetDate}</h2>
              <div class="row-list">
-               <div class="row-item"><span class="label">ยอดขายรวม</span><span class="value">${formatMoney(summary.sales_buffet + summary.sales_ala_carte + summary.sales_takeaway + summary.sales_addon)}</span></div>
+               <div class="row-item"><span class="label">ยอดขายรวมตามระบบ</span><span class="value">${formatMoney(summary.calculated_revenue ?? (summary.sales_buffet + summary.sales_ala_carte + summary.sales_takeaway + summary.sales_addon))}</span></div>
+               ${varianceRowHtml}
                <div class="row-item"><span class="label">ต้นทุนวัตถุดิบ (COGS)</span><span class="value">${formatMoney(summary.cogs)}</span></div>
                <div class="row-item"><span class="label">ค่าถุง</span><span class="value">${formatMoney(summary.packaging_cost)}</span></div>
                <div class="row-item"><span class="label">ค่าใช้จ่ายประจำ (เฉลี่ย/วัน)</span><span class="value">${formatMoney(summary.operating_expense)}</span></div>
-               <div class="row-item"><span class="label">กำไรสุทธิ</span><span class="value ${summary.net_profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(summary.net_profit)}</span></div>
+               <div class="row-item"><span class="label" style="font-weight:700;">กำไรสุทธิ${variance != null ? ' (คิดจากรายรับจริง)' : ''}</span><span class="value ${summary.net_profit >= 0 ? 'profit-pos' : 'profit-neg'}">${formatMoney(summary.net_profit)}</span></div>
              </div>
            </div>`
         : '';
@@ -1815,9 +1926,11 @@ async function renderMenuSettings() {
           const rowsHtml = catItems
             .map(
               (item) => `
-            <div class="row-item">
+            <div class="row-item" style="align-items:center;">
               <span class="label">${escapeHtml(item.name)}</span>
-              <span class="value">${formatMoney(item.default_price)}
+              <span class="value" style="display:flex; align-items:center; gap:6px;">
+                <input type="number" min="0" step="any" class="edit-price-input" data-item-id="${item.id}" data-current-price="${item.default_price}" value="${item.default_price}" style="width:76px;" />
+                <button class="btn-ghost" data-save-price="${item.id}" style="padding:4px 8px; font-size:12px;">บันทึกราคา</button>
                 <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
               </span>
             </div>`
@@ -1896,6 +2009,23 @@ async function renderMenuSettings() {
       renderMenuSettings();
     });
   });
+
+  document.querySelectorAll('[data-save-price]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const itemId = btn.dataset.savePrice;
+      const input = document.querySelector(`.edit-price-input[data-item-id="${itemId}"]`);
+      const newPrice = Number(input.value);
+      if (Number.isNaN(newPrice) || newPrice < 0) { showToast('ราคาไม่ถูกต้อง'); return; }
+      if (newPrice === Number(input.dataset.currentPrice)) { showToast('ราคาไม่เปลี่ยนแปลง'); return; }
+      try {
+        await updateMenuItem(itemId, { default_price: newPrice });
+        showToast('บันทึกราคาใหม่แล้ว (มีผลกับการบันทึกยอดวันถัดไป ไม่กระทบยอดที่บันทึกไปแล้ว)');
+        renderMenuSettings();
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
 }
 
 // ------------------------------------------------------------
@@ -1942,8 +2072,12 @@ async function renderMore() {
     if (!confirm('การนำเข้าจะลบข้อมูลปัจจุบันทั้งหมดแล้วแทนที่ด้วยไฟล์นี้ ยืนยันหรือไม่?')) return;
     try {
       const text = await file.text();
-      await importAllData(JSON.parse(text));
-      showToast('นำเข้าข้อมูลสำเร็จ');
+      const result = await importAllData(JSON.parse(text));
+      showToast(
+        result.missing_tables.length > 0
+          ? `นำเข้าสำเร็จ แต่ไฟล์นี้ไม่มีข้อมูลตาราง: ${result.missing_tables.join(', ')}`
+          : 'นำเข้าข้อมูลสำเร็จ'
+      );
       renderHeader();
       navigate('dashboard');
     } catch (err) {
@@ -1973,7 +2107,7 @@ async function renderFinance() {
         .map(
           (e) => `
         <div class="row-item">
-          <span class="label">${escapeHtml(e.name)} <span style="color:var(--ink-soft)">(${e.frequency === 'weekly' ? 'รายสัปดาห์' : 'รายเดือน'})</span></span>
+          <span class="label">${escapeHtml(e.name)} <span style="color:var(--ink-soft)">(${e.frequency === 'weekly' ? 'รายสัปดาห์' : e.frequency === 'once' ? `ครั้งเดียว ${e.start_date}` : 'รายเดือน'})</span></span>
           <span class="value">${formatMoney(e.amount)}
             <button class="btn-danger-text" data-remove-expense="${e.id}">ลบ</button>
           </span>
@@ -2020,21 +2154,28 @@ async function renderFinance() {
         <div class="field">
           <label for="exp-frequency">ความถี่</label>
           <select id="exp-frequency">
-            <option value="monthly">รายเดือน</option>
-            <option value="weekly">รายสัปดาห์</option>
+            <option value="monthly">รายเดือน (เฉลี่ย/วัน)</option>
+            <option value="weekly">รายสัปดาห์ (เฉลี่ย/วัน)</option>
+            <option value="once">ครั้งเดียว (ลงเต็มจำนวนวันเดียว)</option>
           </select>
         </div>
       </div>
       <div class="field">
-        <label for="exp-start-date">เริ่มมีผลตั้งแต่วันที่</label>
+        <label for="exp-start-date" id="exp-start-date-label">เริ่มมีผลตั้งแต่วันที่</label>
         <input type="date" id="exp-start-date" value="${todayStr()}" />
+        <p style="font-size:12px;color:var(--ink-soft);margin:6px 0 0;">
+          <strong>รายเดือน/รายสัปดาห์:</strong> เหมาะกับค่าเช่า ค่าเน็ต ที่จ่ายสม่ำเสมอ ระบบจะเฉลี่ยเป็นต้นทุนราย วัน ให้อัตโนมัติ<br/>
+          <strong>ครั้งเดียว:</strong> เหมาะกับของที่จ่ายไม่สม่ำเสมอ เช่น <strong>ค่าแก๊สหุงต้ม</strong> (เติมกี่วันครั้งไม่แน่นอน) หรือค่าซ่อมบำรุงเฉพาะครั้ง — จะลงเต็มจำนวนในวันที่ระบุวันเดียว ไม่เฉลี่ย
+        </p>
       </div>
-      <button class="btn btn-ghost" id="btn-add-expense">+ เพิ่มค่าใช้จ่ายประจำ</button>
+      <button class="btn btn-ghost" id="btn-add-expense">+ เพิ่มค่าใช้จ่าย</button>
     </div>
 
     <div class="card">
       <h2>บันทึกจ่ายจริง</h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เงินที่จ่ายออกจริง — แยกจากยอดเฉลี่ยอัตโนมัติด้านบน</p>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">
+        รายการนี้ใช้สำหรับ<strong>ดูภาพรวมเงินสดที่จ่ายออกจริง</strong>เท่านั้น — <strong>ไม่ได้ไปลดกำไรสุทธิ</strong> (กำไรสุทธิคำนวณจากต้นทุนวัตถุดิบที่นับสต็อก + ค่าใช้จ่ายประจำด้านบนเท่านั้น) ถ้าอยากให้รายจ่ายนี้ไปลดกำไรด้วย ให้เพิ่มเป็น "ค่าใช้จ่ายประจำ" ด้านบนแทน (เลือกความถี่ "ครั้งเดียว" ได้ถ้าจ่ายไม่สม่ำเสมอ)
+      </p>
       <div class="field">
         <label for="pay-expense">ผูกกับรายการประจำ (ถ้ามี)</label>
         <select id="pay-expense">${expenseOptions}</select>
@@ -2051,7 +2192,8 @@ async function renderFinance() {
       </div>
       <div class="field">
         <label for="pay-category">หมวดหมู่</label>
-        <input type="text" id="pay-category" placeholder="เช่น ค่าเช่า, ซ่อมบำรุง, วัตถุดิบเบ็ดเตล็ด" />
+        <input type="text" id="pay-category" placeholder="เช่น ค่าเช่า, ซ่อมบำรุง, ค่าน้ำค่าไฟ" />
+        <p style="font-size:12px;color:var(--ink-soft);margin:6px 0 0;">ใช้บันทึกรายจ่ายอื่นๆ ที่ไม่ใช่วัตถุดิบ (เช่น ค่าเช่า ค่าแรง ซ่อมบำรุง) — <strong>ไม่ต้องบันทึกยอดซื้อวัตถุดิบซ้ำที่นี่</strong> เพราะระบบดึงยอดจากหน้า "วัตถุดิบ" มารวมในรายงานค่าใช้จ่ายให้อัตโนมัติอยู่แล้ว</p>
       </div>
       <div class="field">
         <label for="pay-note">โน้ต (ถ้ามี)</label>
@@ -2127,10 +2269,11 @@ async function renderReports(fromParam, toParam) {
   const from = defaultFrom;
   const to = toParam || today;
 
-  const [topItems, monthly, expenseBreakdown] = await Promise.all([
+  const [topItems, monthly, expenseBreakdown, weekday] = await Promise.all([
     getTopSellingAddons(from, to, 10),
     getMonthlyBreakdown(from, to),
     getExpenseBreakdown(from, to),
+    getWeekdayBreakdown(from, to),
   ]);
 
   const topItemsHtml = topItems.length
@@ -2159,7 +2302,7 @@ async function renderReports(fromParam, toParam) {
           <tbody>
             ${monthly
               .map((m) => {
-                const revenue = m.sales_buffet + m.sales_ala_carte + m.sales_takeaway + m.sales_addon;
+                const revenue = m.effective_revenue;
                 const cost = m.cogs + m.packaging_cost + m.operating_expense;
                 return `
                 <tr>
@@ -2193,6 +2336,23 @@ async function renderReports(fromParam, toParam) {
         .join('')
     : `<div class="empty-state"><p>ยังไม่มีรายการจ่ายจริงในช่วงนี้</p></div>`;
 
+  const weekdayRowsHtml = weekday.buckets
+    .map(
+      (b) => `
+      <div class="row-item">
+        <span class="label">${b.name}${b.days_count > 0 ? ` <span style="color:var(--ink-soft);font-size:12px;">(${b.days_count} วัน)</span>` : ''}</span>
+        <span class="value ${b.days_count > 0 ? (b.avg_profit >= 0 ? 'profit-pos' : 'profit-neg') : ''}">${b.days_count > 0 ? formatMoney(b.avg_profit) + '/วัน' : '—'}</span>
+      </div>`
+    )
+    .join('');
+
+  const weekdaySuggestionHtml = weekday.suggestion
+    ? `<p style="font-size:13px;color:var(--ink-soft);margin-top:10px;">
+         จากข้อมูลในช่วงนี้ <strong style="color:var(--ink);">วัน${weekday.suggestion.name}</strong> มีกำไรเฉลี่ยต่ำสุด (${formatMoney(weekday.suggestion.avg_profit)}/วัน)
+         ${weekday.suggestion.avg_profit < 0 ? ' และขาดทุนโดยเฉลี่ย น่าจะลองพิจารณาหยุดร้านวันนี้ดู' : ' ลองเทียบกับต้นทุนคงที่ที่ยังต้องจ่ายแม้ปิดร้าน ก่อนตัดสินใจ'}
+       </p>`
+    : `<p style="font-size:13px;color:var(--ink-soft);margin-top:10px;">ต้องมีข้อมูลอย่างน้อย 2 ครั้งของแต่ละวัน และครบอย่างน้อย 3 วันในสัปดาห์ที่ต่างกัน ถึงจะวิเคราะห์ได้แม่นยำพอ — บันทึกยอดขายต่อไปเรื่อยๆ แล้วกลับมาดูใหม่</p>`;
+
   $content.innerHTML = `
     <h1 class="section-title">รายงาน</h1>
 
@@ -2208,6 +2368,13 @@ async function renderReports(fromParam, toParam) {
           <input type="date" id="rep-to" value="${to}" max="${today}" />
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>กำไรเฉลี่ยตามวันในสัปดาห์ (แนะนำวันหยุดร้าน)</h2>
+      ${buildWeekdayChartSvg(weekday.buckets)}
+      <div class="row-list" style="margin-top:10px;">${weekdayRowsHtml}</div>
+      ${weekdaySuggestionHtml}
     </div>
 
     <div class="card">
@@ -2298,15 +2465,38 @@ async function renderIngredients(detailId) {
       ? lotsDesc
           .map(
             (p) => `
-          <tr>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${p.purchase_date}</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${p.quantity} ${escapeHtml(selectedIng.unit)}</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(p.unit_cost)}</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(p.total_cost)}</td>
+          <tr data-purchase-id="${p.id}">
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);"><input type="date" class="edit-purchase-date" value="${p.purchase_date}" style="font-size:12px;padding:4px;" /></td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);"><input type="number" min="0" step="any" class="edit-purchase-qty" value="${p.quantity}" style="width:60px;text-align:right;font-size:12px;padding:4px;" /></td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);"><input type="number" min="0" step="any" class="edit-purchase-cost" value="${p.unit_cost}" style="width:64px;text-align:right;font-size:12px;padding:4px;" /></td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">
+              <button class="btn-ghost" data-save-purchase="${p.id}" style="padding:3px 6px;font-size:11px;">บันทึก</button>
+              <button class="btn-danger-text" data-remove-purchase="${p.id}" style="font-size:11px;">ลบ</button>
+            </td>
           </tr>`
           )
           .join('')
       : `<tr><td colspan="4" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีประวัติซื้อ</td></tr>`;
+
+    const counts = await db.ingredient_stock_counts.where('ingredient_id').equals(selectedIng.id).sortBy('count_date');
+    const countsDesc = counts.slice().reverse();
+    const countsRowsHtml = countsDesc.length
+      ? countsDesc
+          .map(
+            (c) => `
+          <tr data-count-id="${c.id}">
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${c.count_date}</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${c.opening_stock} + ${c.purchased_qty}</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);"><input type="number" step="any" class="edit-count-closing" value="${c.closing_count}" style="width:64px;text-align:right;font-size:12px;padding:4px;" /></td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${c.used_qty} (${formatMoney(c.used_value)})</td>
+            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">
+              <button class="btn-ghost" data-save-count="${c.id}" style="padding:3px 6px;font-size:11px;">บันทึก</button>
+              <button class="btn-danger-text" data-remove-count="${c.id}" style="font-size:11px;">ลบ</button>
+            </td>
+          </tr>`
+          )
+          .join('')
+      : `<tr><td colspan="5" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีประวัติการนับ</td></tr>`;
 
     detailHtml = `
     <div class="card" data-ingredient-detail="${selectedIng.id}">
@@ -2323,7 +2513,7 @@ async function renderIngredients(detailId) {
         <span class="value">${formatMoney(selectedIng.current_avg_cost)}</span>
       </div>
 
-      <h3 style="margin-top:14px;">ประวัติราคาซื้อรายล็อต</h3>
+      <h3 style="margin-top:14px;">ประวัติราคาซื้อรายล็อต <span style="font-size:12px;color:var(--ink-soft);font-weight:400;">(แก้ไข/ลบได้ — ระบบจะคำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ให้อัตโนมัติ)</span></h3>
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
@@ -2331,10 +2521,26 @@ async function renderIngredients(detailId) {
               <th style="padding:6px;">วันที่</th>
               <th style="padding:6px;text-align:right;">จำนวน</th>
               <th style="padding:6px;text-align:right;">ราคา/หน่วย</th>
-              <th style="padding:6px;text-align:right;">มูลค่ารวม</th>
+              <th style="padding:6px;text-align:right;"></th>
             </tr>
           </thead>
           <tbody>${lotsRowsHtml}</tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top:16px;">ประวัติการนับสต็อก <span style="font-size:12px;color:var(--ink-soft);font-weight:400;">(แก้ไข/ลบได้เช่นกัน — รวมถึงแทรกนับย้อนหลังได้ ระบบจะไล่คำนวณวันหลังจากนั้นใหม่ให้)</span></h3>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+              <th style="padding:6px;">วันที่นับ</th>
+              <th style="padding:6px;text-align:right;">ต้นงวด+รับเข้า</th>
+              <th style="padding:6px;text-align:right;">นับได้</th>
+              <th style="padding:6px;text-align:right;">ใช้ไป</th>
+              <th style="padding:6px;text-align:right;"></th>
+            </tr>
+          </thead>
+          <tbody>${countsRowsHtml}</tbody>
         </table>
       </div>
 
@@ -2547,11 +2753,70 @@ async function renderIngredients(detailId) {
         document.getElementById('detail-count-result').textContent =
           `ใช้ไป ${result.used_qty} หน่วย มูลค่า ${formatMoney(result.used_value)}`;
         showToast('บันทึกนับสต็อกสำเร็จ');
+        renderIngredients(ingredientsDetailId);
       } catch (err) {
         showToast('เกิดข้อผิดพลาด: ' + err.message);
       }
     });
   }
+
+  document.querySelectorAll('[data-save-purchase]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const purchase_date = row.querySelector('.edit-purchase-date').value;
+      const quantity = Number(row.querySelector('.edit-purchase-qty').value);
+      const unit_cost = Number(row.querySelector('.edit-purchase-cost').value);
+      if (!(quantity > 0) || unit_cost < 0) { showToast('จำนวน/ราคาไม่ถูกต้อง'); return; }
+      try {
+        await updatePurchase(btn.dataset.savePurchase, { purchase_date, quantity, unit_cost });
+        showToast('แก้ไขรายการซื้อแล้ว — คำนวณต้นทุนและ COGS วันหลังจากนี้ใหม่ให้แล้ว');
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-remove-purchase]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบรายการซื้อนี้? ระบบจะคำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนี้ใหม่')) return;
+      try {
+        await removePurchase(btn.dataset.removePurchase);
+        showToast('ลบรายการซื้อแล้ว');
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-save-count]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const closing_count = Number(row.querySelector('.edit-count-closing').value);
+      if (Number.isNaN(closing_count)) { showToast('จำนวนที่นับไม่ถูกต้อง'); return; }
+      try {
+        await updateStockCount(btn.dataset.saveCount, { closing_count });
+        showToast('แก้ไขการนับสต็อกแล้ว — คำนวณ COGS วันหลังจากนี้ใหม่ให้แล้ว');
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-remove-count]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบรายการนับสต็อกนี้? ระบบจะคำนวณ COGS ของทุกวันหลังจากนี้ใหม่')) return;
+      try {
+        await removeStockCount(btn.dataset.removeCount);
+        showToast('ลบรายการนับสต็อกแล้ว');
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  });
 }
 
 // ------------------------------------------------------------

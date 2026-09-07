@@ -285,6 +285,23 @@ db.version(1).stores({
   system_meta: 'id, &key',
 });
 
+// v2: ค่าเช่าแบบ Slowly Changing Dimension + ค่าน้ำ/ไฟ/แก๊สแบบสรุปสิ้นเดือน
+// (ตารางเดิมทั้งหมดจาก v1 ยังอยู่เหมือนเดิม ไม่ต้องประกาศซ้ำ — Dexie สืบทอด schema เดิมให้อัตโนมัติ)
+db.version(2).stores({
+  // effective_to = null หมายถึง "รอบที่ใช้อยู่ปัจจุบัน" — ห้ามมี 2 record ที่ effective_to เป็น null พร้อมกัน
+  // (คุมด้วย business logic ใน addRentChange ไม่ใช่ constraint ของ Dexie โดยตรง)
+  rent_history: 'id, effective_from, effective_to',
+
+  // 1 record ต่อ 1 เดือน (period_month = 'YYYY-MM') บันทึกตอนสิ้นเดือน ไม่จดรายวัน
+  utility_monthly_readings: 'id, &period_month',
+});
+
+// v3: แยกค่าแก๊สออกจาก utility รายเดือน — เพราะแก๊สเป็น "รายครั้ง" (หมดแล้วสั่งเพิ่ม)
+// ไม่ได้ผูกกับรอบเดือนปฏิทินเหมือนบิลน้ำ/ไฟ จึงบันทึกเป็น log การซื้อแต่ละครั้งแทน
+db.version(3).stores({
+  gas_purchases: 'id, purchase_date',
+});
+
 
 
 // ============================================================
@@ -748,7 +765,10 @@ async function generateDailySummary(summary_date) {
   const packaging_cost = packagingFee * (entry.takeaway_count || 0);
 
   // ค่าใช้จ่ายประจำแบบ accrual (เฉลี่ย/วัน) จาก operating_expenses ที่ active ณ วันนี้
-  // ยกเว้นแบบ 'once' (เช่น ค่าแก๊สหุงต้มที่เติมไม่สม่ำเสมอ, ค่าซ่อมบำรุงเฉพาะครั้ง) จะลงเต็มจำนวนเฉพาะวันที่ระบุวันเดียว ไม่หารเฉลี่ย
+  // ยกเว้นแบบ 'once' (เช่น ค่าซ่อมบำรุงเฉพาะครั้ง) จะลงเต็มจำนวนเฉพาะวันที่ระบุวันเดียว ไม่หารเฉลี่ย
+  // หมายเหตุ: ค่าเช่าและค่าน้ำ/ไฟ/แก๊ส ย้ายไปคำนวณจาก rent_history / utility_monthly_readings
+  // แยกต่างหากด้านล่างแล้ว (แม่นกว่าเพราะรองรับค่าเช่าที่เปลี่ยนกลางเดือน) — อย่าลืมลบรายการ
+  // "ค่าเช่า" / "ค่าน้ำ ค่าไฟ" เดิมออกจาก operating_expenses ถ้าเคยเพิ่มไว้ ไม่งั้นจะถูกนับซ้ำ
   const activeExpenses = (await db.operating_expenses.toArray()).filter((e) => {
     if (!e.is_active) return false;
     if (e.frequency === 'once') return e.start_date === summary_date;
@@ -756,11 +776,21 @@ async function generateDailySummary(summary_date) {
     if (e.end_date && e.end_date < summary_date) return false;
     return true;
   });
-  const operating_expense = activeExpenses.reduce((sum, e) => {
+  const otherFixedExpense = activeExpenses.reduce((sum, e) => {
     if (e.frequency === 'once') return sum + e.amount;
     const divisor = e.frequency === 'weekly' ? 7 : 30;
     return sum + e.amount / divisor;
   }, 0);
+
+  const rent_cost = await getDailyRentCost(summary_date);
+  const utilityResult = await getDailyUtilityCost(summary_date);
+  const utility_cost = utilityResult.value;
+  const utility_is_estimated = utilityResult.is_estimated;
+  const gasResult = await getDailyGasCost(summary_date);
+  const gas_cost = gasResult.value;
+  const gas_is_estimated = gasResult.is_estimated;
+
+  const operating_expense = otherFixedExpense + rent_cost + utility_cost + gas_cost;
 
   // "รายรับจริง" (ถ้ากรอกไว้) ใช้เป็นฐานคำนวณกำไรจริงแทนยอดตามระบบ เพื่อสะท้อนเงินสด/โอนที่นับได้จริง
   // (ครอบคลุมส่วนต่างจากส่วนลด/แถม/นับผิด/เงินขาดที่ไม่ได้ถูกบันทึกเป็นรายการแยก)
@@ -786,6 +816,11 @@ async function generateDailySummary(summary_date) {
     cogs,
     packaging_cost,
     operating_expense,
+    rent_cost,
+    utility_cost,
+    utility_is_estimated,
+    gas_cost,
+    gas_is_estimated,
     net_profit,
     note: null,
     updated_at: nowIso(),
@@ -1148,6 +1183,267 @@ async function getExpensePaymentsRange(fromDate, toDate) {
     .where('payment_date')
     .between(fromDate, toDate, true, true)
     .toArray();
+}
+
+/** regenerate daily_summary ของทุกวันในช่วงที่ระบุ (inclusive) — เรียกหลังแก้ไขค่าเช่า/บิลน้ำไฟ/ค่าแก๊ส
+ *  ย้อนหลัง เพื่อให้ P&L ของวันที่ "ปิดไปแล้ว" อัปเดตตามตัวเลขใหม่ทันที แทนที่จะค้างค่าเก่าไว้เงียบๆ
+ *  ปลอดภัยเรียกได้เสมอแม้ยังไม่มี daily_entries ของวันนั้น เพราะ generateDailySummary จะข้ามให้เอง (return null)
+ *  ทำนอก transaction เสมอ เพราะ generateDailySummary ต้องอ่านตารางอื่นๆ ที่กว้างกว่าตารางต้นทุนตารางเดียว */
+async function regenerateSummariesInRange(fromDate, toDate) {
+  const today = todayStr();
+  const clampedTo = toDate > today ? today : toDate;
+  if (fromDate > clampedTo) return [];
+  const regenerated = [];
+  const cursor = new Date(fromDate + 'T00:00:00');
+  const end = new Date(clampedTo + 'T00:00:00');
+  while (cursor <= end) {
+    const dateStr = cursor.toISOString().slice(0, 10);
+    const result = await generateDailySummary(dateStr);
+    if (result) regenerated.push(dateStr);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return regenerated;
+}
+
+// ---------------------------------------------------------------------------
+// 6b) ค่าเช่า (Rent) — Slowly Changing Dimension Type 2
+//     แนวคิด: แต่ละ record คือ "รอบค่าเช่า" หนึ่งรอบ มี effective_from..effective_to
+//     รอบปัจจุบันจะมี effective_to = null เสมอ พอเปลี่ยนค่าเช่ารอบใหม่ ระบบจะ "ปิด" รอบเก่า
+//     ให้อัตโนมัติ (effective_to = วันก่อนหน้ารอบใหม่ 1 วัน) การคำนวณ P&L ย้อนหลังจึงไม่กระทบ
+//     เพราะแต่ละวันจะดึงค่าเช่า "ที่มีผล ณ วันนั้นจริงๆ" ผ่าน getRentForDate()
+// ---------------------------------------------------------------------------
+
+/** เพิ่มค่าเช่ารอบใหม่ (ตอนต่อสัญญา/ขึ้นราคา/ได้ส่วนลด) — ปิดรอบเดิมให้อัตโนมัติ กันช่วงวันที่ทับกัน
+ *  แล้ว regenerate daily_summary ของทุกวันตั้งแต่ effective_from ถึงวันนี้ ให้ P&L ที่ปิดไปแล้วอัปเดตตามทันที */
+async function addRentChange({ monthly_rent, effective_from, note = null }) {
+  if (!(monthly_rent >= 0)) throw new Error('ค่าเช่าต้องเป็นตัวเลขไม่ติดลบ');
+  if (!effective_from) throw new Error('กรุณาระบุวันที่เริ่มมีผล');
+
+  const record = await db.transaction('rw', db.rent_history, async () => {
+    const current = await db.rent_history.filter((r) => r.effective_to === null).first();
+    if (current) {
+      if (effective_from <= current.effective_from) {
+        throw new Error(`วันที่เริ่มมีผลต้องอยู่หลังรอบปัจจุบัน (รอบปัจจุบันเริ่ม ${current.effective_from})`);
+      }
+      const prevEnd = new Date(effective_from + 'T00:00:00');
+      prevEnd.setDate(prevEnd.getDate() - 1);
+      await db.rent_history.update(current.id, { effective_to: prevEnd.toISOString().slice(0, 10) });
+    }
+    const newRecord = { id: uuid(), monthly_rent, effective_from, effective_to: null, note, created_at: nowIso() };
+    await db.rent_history.add(newRecord);
+    return newRecord;
+  });
+
+  const regenerated_dates = await regenerateSummariesInRange(effective_from, todayStr());
+  return { ...record, regenerated_dates_count: regenerated_dates.length };
+}
+
+/** ดึง "รอบค่าเช่าที่มีผล" ณ วันที่ระบุ — ใช้ตอนคำนวณ daily_summary เพื่อให้ P&L ย้อนหลังตรงกับค่าเช่าจริงของวันนั้น */
+async function getRentForDate(dateStr) {
+  const rows = await db.rent_history.where('effective_from').belowOrEqual(dateStr).toArray();
+  const active = rows.filter((r) => r.effective_to === null || r.effective_to >= dateStr);
+  if (active.length === 0) return null;
+  return active.sort((a, b) => (a.effective_from < b.effective_from ? 1 : -1))[0];
+}
+
+/** ค่าเช่ารอบปัจจุบัน (effective_to = null) สำหรับแสดงบนหน้าจอ */
+async function getCurrentRent() {
+  return db.rent_history.filter((r) => r.effective_to === null).first();
+}
+
+/** ประวัติค่าเช่าทั้งหมด เรียงจากรอบล่าสุด -> เก่าสุด */
+async function getRentHistory() {
+  const rows = await db.rent_history.toArray();
+  return rows.sort((a, b) => (a.effective_from < b.effective_from ? 1 : -1));
+}
+
+/** ลบ "รอบล่าสุด" ได้เท่านั้น (เผื่อกดผิด/พิมพ์เลขผิด) แล้วเปิดรอบก่อนหน้ากลับมาเป็นรอบปัจจุบันแทน
+ *  ป้องกันการลบรอบเก่ากลางประวัติ ซึ่งจะทำให้ P&L ย้อนหลังของช่วงนั้นขาดข้อมูลค่าเช่าไปเลย */
+async function removeLatestRentChange() {
+  const current = await db.rent_history.filter((r) => r.effective_to === null).first();
+  if (!current) throw new Error('ไม่มีรอบค่าเช่าปัจจุบันให้ลบ');
+  const result = await db.transaction('rw', db.rent_history, async () => {
+    await db.rent_history.delete(current.id);
+    const remaining = await db.rent_history.toArray();
+    if (remaining.length > 0) {
+      const prev = remaining.sort((a, b) => (a.effective_from < b.effective_from ? 1 : -1))[0];
+      await db.rent_history.update(prev.id, { effective_to: null });
+    }
+    return { deleted_id: current.id };
+  });
+  const regenerated_dates = await regenerateSummariesInRange(current.effective_from, todayStr());
+  return { ...result, regenerated_dates_count: regenerated_dates.length };
+}
+
+/** ค่าเช่าเฉลี่ย/วัน ของวันที่ระบุ — หารด้วยจำนวนวันจริงของ "เดือนนั้น" (28/29/30/31)
+ *  ไม่ใช้ตัวหารคงที่ 30 แบบ operating_expenses เดิม เพื่อความแม่นยำเวลาเทียบ ก.พ. กับเดือนอื่น */
+async function getDailyRentCost(dateStr) {
+  const rent = await getRentForDate(dateStr);
+  if (!rent) return 0;
+  const [y, m] = dateStr.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  return rent.monthly_rent / daysInMonth;
+}
+
+// ---------------------------------------------------------------------------
+// 6c) ค่าน้ำ/ค่าไฟ/ค่าแก๊ส — บันทึกสรุป "สิ้นเดือน" เดือนละ 1 ครั้ง ไม่จดมิเตอร์รายวัน
+//     1 record ต่อ 1 period_month ('YYYY-MM') ถ้าบันทึกซ้ำเดือนเดิมจะเป็นการ "แก้ไข" record เดิม
+// ---------------------------------------------------------------------------
+
+function computeMonthlyUtilityTotal(row) {
+  return (row.water_bill_amount || 0) + (row.electric_bill_amount || 0);
+}
+
+/** บันทึก/แก้ไขบิลน้ำ+ไฟของเดือนนั้น (ค่าแก๊สแยกไปที่ gas_purchases แล้ว เพราะเป็นรายครั้ง ไม่ใช่รายเดือน)
+ *  days_in_period ใส่ได้เผื่อเดือนไหนปิดร้านหลายวัน อยากหารเฉลี่ยเฉพาะวันเปิดจริง
+ *  (ถ้าไม่ระบุ จะใช้จำนวนวันเต็มเดือนตามปฏิทิน) */
+async function recordMonthlyUtility({ period_month, water_bill_amount = 0, electric_bill_amount = 0, days_in_period = null, note = null }) {
+  if (!/^\d{4}-\d{2}$/.test(period_month || '')) throw new Error('กรุณาระบุเดือนให้ถูกรูปแบบ (YYYY-MM)');
+  const [y, m] = period_month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const effectiveDays = days_in_period && days_in_period > 0 ? Math.min(days_in_period, daysInMonth) : daysInMonth;
+
+  const existing = await db.utility_monthly_readings.where('period_month').equals(period_month).first();
+  const record = {
+    id: existing ? existing.id : uuid(),
+    period_month,
+    water_bill_amount,
+    electric_bill_amount,
+    days_in_period: effectiveDays,
+    note,
+    updated_at: nowIso(),
+  };
+  await db.utility_monthly_readings.put(record);
+
+  const firstDay = `${period_month}-01`;
+  const lastDay = `${period_month}-${String(daysInMonth).padStart(2, '0')}`;
+  const regenerated_dates = await regenerateSummariesInRange(firstDay, lastDay);
+  return { ...record, regenerated_dates_count: regenerated_dates.length };
+}
+
+async function getUtilityForMonth(period_month) {
+  return db.utility_monthly_readings.where('period_month').equals(period_month).first();
+}
+
+/** ประวัติบิลรายเดือนทั้งหมด เรียงจากเดือนล่าสุด -> เก่าสุด */
+async function listUtilityHistory() {
+  const rows = await db.utility_monthly_readings.toArray();
+  return rows.sort((a, b) => (a.period_month < b.period_month ? 1 : -1));
+}
+
+async function removeMonthlyUtility(id) {
+  const existing = await db.utility_monthly_readings.get(id);
+  await db.utility_monthly_readings.delete(id);
+  if (existing) {
+    const [y, m] = existing.period_month.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const firstDay = `${existing.period_month}-01`;
+    const lastDay = `${existing.period_month}-${String(daysInMonth).padStart(2, '0')}`;
+    await regenerateSummariesInRange(firstDay, lastDay);
+  }
+  return { id, deleted: true };
+}
+
+/** ค่าน้ำ+ไฟเฉลี่ย/วัน ของวันที่ระบุ — ถ้าเดือนนั้นยังไม่ได้กรอกบิล (เช่น เดือนปัจจุบันที่ยังไม่จบเดือน)
+ *  จะ fallback ไปใช้บิลของเดือนล่าสุดที่มีข้อมูลแทนเป็น "ค่าประมาณการ" (is_estimated: true)
+ *  พอสิ้นเดือนกรอกบิลจริงเข้ามา ตัวเลขของเดือนนั้นจะแม่นขึ้นเองโดยไม่กระทบเดือนอื่น */
+async function getDailyUtilityCost(dateStr) {
+  const period_month = dateStr.slice(0, 7);
+  const exact = await getUtilityForMonth(period_month);
+  if (exact) {
+    return { value: computeMonthlyUtilityTotal(exact) / exact.days_in_period, is_estimated: false, source_month: period_month };
+  }
+  const latest = await db.utility_monthly_readings.orderBy('period_month').last();
+  if (!latest) return { value: 0, is_estimated: true, source_month: null };
+  return { value: computeMonthlyUtilityTotal(latest) / latest.days_in_period, is_estimated: true, source_month: latest.period_month };
+}
+
+// ---------------------------------------------------------------------------
+// 6d) ค่าแก๊สหุงต้ม — บันทึกเป็น "รายครั้ง" ทุกครั้งที่ซื้อ (หมดแล้วสั่งเพิ่ม ไม่ตรงรอบเดือนปฏิทิน)
+//     ประมาณการต้นทุน/วัน ใช้วิธี "อัตราการเผาผลาญ" (burn rate) แบบ rolling window ย้อนหลัง
+//     แทนที่จะหารตามรอบเดือน เพราะช่วงเวลาระหว่างการซื้อแต่ละครั้งไม่เท่ากัน
+// ---------------------------------------------------------------------------
+
+function diffDaysInclusive(fromDateStr, toDateStr) {
+  const a = new Date(fromDateStr + 'T00:00:00');
+  const b = new Date(toDateStr + 'T00:00:00');
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+function gasBurnWindowEnd(purchaseDateStr, windowDays = 30) {
+  const d = new Date(purchaseDateStr + 'T00:00:00');
+  d.setDate(d.getDate() + windowDays - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+async function recordGasPurchase({ purchase_date, tanks_qty, cost_per_tank, note = null }) {
+  if (!purchase_date) throw new Error('กรุณาระบุวันที่ซื้อ');
+  if (!(tanks_qty > 0)) throw new Error('จำนวนถังต้องมากกว่า 0');
+  if (!(cost_per_tank >= 0)) throw new Error('ราคาต่อถังไม่ถูกต้อง');
+  const record = {
+    id: uuid(),
+    purchase_date,
+    tanks_qty,
+    cost_per_tank,
+    total_cost: tanks_qty * cost_per_tank,
+    note,
+    created_at: nowIso(),
+  };
+  await db.gas_purchases.add(record);
+
+  // การซื้อครั้งนี้กระทบค่าประมาณการ/วันของทุกวันในหน้าต่าง burn-rate ที่ตามหลังมันมา (ดู getDailyGasCost)
+  const regenerated_dates = await regenerateSummariesInRange(purchase_date, gasBurnWindowEnd(purchase_date));
+  return { ...record, regenerated_dates_count: regenerated_dates.length };
+}
+
+async function updateGasPurchase(id, changes) {
+  const merged = { ...changes };
+  if (merged.tanks_qty != null || merged.cost_per_tank != null) {
+    const existing = await db.gas_purchases.get(id);
+    const tanks_qty = merged.tanks_qty != null ? merged.tanks_qty : existing.tanks_qty;
+    const cost_per_tank = merged.cost_per_tank != null ? merged.cost_per_tank : existing.cost_per_tank;
+    merged.total_cost = tanks_qty * cost_per_tank;
+  }
+  await db.gas_purchases.update(id, merged);
+  const updated = await db.gas_purchases.get(id);
+  if (updated) await regenerateSummariesInRange(updated.purchase_date, gasBurnWindowEnd(updated.purchase_date));
+  return updated;
+}
+
+async function removeGasPurchase(id) {
+  const existing = await db.gas_purchases.get(id);
+  await db.gas_purchases.delete(id);
+  if (existing) await regenerateSummariesInRange(existing.purchase_date, gasBurnWindowEnd(existing.purchase_date));
+  return { id, deleted: true };
+}
+
+/** ประวัติการซื้อแก๊สทั้งหมด เรียงจากล่าสุด -> เก่าสุด */
+async function listGasPurchases() {
+  const rows = await db.gas_purchases.toArray();
+  return rows.sort((a, b) => (a.purchase_date < b.purchase_date ? 1 : -1));
+}
+
+/** ค่าแก๊สเฉลี่ย/วัน ของวันที่ระบุ — คิดจาก "อัตราการเผาผลาญ" ย้อนหลัง windowDays วัน (default 30)
+ *  ถ้าช่วงนั้นไม่มีการซื้อเลย (เช่น ตุนไว้นานมาก) จะ fallback ไปเฉลี่ยจากประวัติการซื้อทั้งหมดแทน
+ *  หมายเหตุ: นี่คือค่า "ประมาณการ" ล้วนๆ สำหรับใช้คำนวณ Break-even/Overhead รายวัน
+ *  ไม่ใช่ยอดที่ลงบัญชีจริงในวันที่ซื้อ (ยอดจริงยังอยู่ครบใน gas_purchases ทุก record) */
+async function getDailyGasCost(dateStr, windowDays = 30) {
+  const windowStart = new Date(dateStr + 'T00:00:00');
+  windowStart.setDate(windowStart.getDate() - windowDays + 1);
+  const windowStartStr = windowStart.toISOString().slice(0, 10);
+
+  const purchasesInWindow = await db.gas_purchases.where('purchase_date').between(windowStartStr, dateStr, true, true).toArray();
+  if (purchasesInWindow.length > 0) {
+    const totalCost = purchasesInWindow.reduce((sum, p) => sum + p.total_cost, 0);
+    return { value: totalCost / windowDays, is_estimated: false, basis_days: windowDays, purchases_count: purchasesInWindow.length };
+  }
+
+  // ไม่มีการซื้อในช่วง windowDays ล่าสุด (อาจตุนไว้นาน) -> เฉลี่ยจากประวัติการซื้อทั้งหมดแทน กันไม่ให้เป็น 0 เฉยๆ
+  const allPurchases = (await db.gas_purchases.where('purchase_date').belowOrEqual(dateStr).toArray()).sort((a, b) => (a.purchase_date < b.purchase_date ? -1 : 1));
+  if (allPurchases.length === 0) return { value: 0, is_estimated: true, basis_days: null, purchases_count: 0 };
+  const totalCost = allPurchases.reduce((sum, p) => sum + p.total_cost, 0);
+  const basisDays = Math.max(1, diffDaysInclusive(allPurchases[0].purchase_date, dateStr));
+  return { value: totalCost / basisDays, is_estimated: true, basis_days: basisDays, purchases_count: allPurchases.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -2091,6 +2387,15 @@ async function renderMore() {
 // ------------------------------------------------------------
 async function renderFinance() {
   const expenses = await listOperatingExpenses({ activeOnly: true });
+  const currentRent = await getCurrentRent();
+  const rentHistory = await getRentHistory();
+  const thisMonth = todayStr().slice(0, 7);
+  const currentMonthUtility = await getUtilityForMonth(thisMonth);
+  const utilityHistory = await listUtilityHistory();
+  const utilityFallback = currentMonthUtility ? null : await getDailyUtilityCost(todayStr());
+  const gasHistory = await listGasPurchases();
+  const gasEstimate = await getDailyGasCost(todayStr());
+  const lastGasCost = gasHistory.length ? gasHistory[0].cost_per_tank : '';
 
   const to = todayStr();
   const fromDateObj = new Date();
@@ -2116,6 +2421,49 @@ async function renderFinance() {
         .join('')
     : `<div class="empty-state"><p>ยังไม่มีค่าใช้จ่ายประจำ</p></div>`;
 
+  const rentHistoryHtml = rentHistory.length
+    ? rentHistory
+        .map((r) => {
+          const isCurrent = r.effective_to === null;
+          const rangeLabel = isCurrent ? `${r.effective_from} — ปัจจุบัน` : `${r.effective_from} — ${r.effective_to}`;
+          return `
+        <div class="row-item">
+          <span class="label">${rangeLabel}${r.note ? ` <span style="color:var(--ink-soft)">(${escapeHtml(r.note)})</span>` : ''}${isCurrent ? ' <span class="stamp ok" style="padding:2px 8px;font-size:11px;">ปัจจุบัน</span>' : ''}</span>
+          <span class="value">${formatMoney(r.monthly_rent)}/เดือน</span>
+        </div>`;
+        })
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่มีประวัติค่าเช่า — เพิ่มรอบแรกด้านล่างได้เลย</p></div>`;
+
+  const utilityHistoryHtml = utilityHistory.length
+    ? utilityHistory
+        .map((u) => {
+          const total = computeMonthlyUtilityTotal(u);
+          return `
+        <div class="row-item">
+          <span class="label">${u.period_month} <span style="color:var(--ink-soft)">(หาร ${u.days_in_period} วัน)</span>
+            <button class="btn-danger-text" data-remove-utility="${u.id}">ลบ</button>
+          </span>
+          <span class="value">${formatMoney(total)} <span style="color:var(--ink-soft);font-weight:400;">(${formatMoney(total / u.days_in_period)}/วัน)</span></span>
+        </div>`;
+        })
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่เคยบันทึกบิลน้ำ/ไฟเลย</p></div>`;
+
+  const gasHistoryHtml = gasHistory.length
+    ? gasHistory
+        .map(
+          (g) => `
+        <div class="row-item">
+          <span class="label">${g.purchase_date} — ${g.tanks_qty} ถัง × ${formatMoney(g.cost_per_tank)}${g.note ? ` <span style="color:var(--ink-soft)">(${escapeHtml(g.note)})</span>` : ''}
+            <button class="btn-danger-text" data-remove-gas="${g.id}">ลบ</button>
+          </span>
+          <span class="value">${formatMoney(g.total_cost)}</span>
+        </div>`
+        )
+        .join('')
+    : `<div class="empty-state"><p>ยังไม่เคยบันทึกการซื้อแก๊สเลย</p></div>`;
+
   const paymentsListHtml = recentPayments.length
     ? recentPayments
         .map((p) => {
@@ -2135,8 +2483,123 @@ async function renderFinance() {
     <h1 class="section-title">การเงิน</h1>
 
     <div class="card">
-      <h2>ค่าใช้จ่ายประจำ</h2>
-      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">คิดเฉลี่ยเป็นต้นทุนรายวันในหน้าสรุปอัตโนมัติ (เช่น ค่าเช่า ค่าเน็ต)</p>
+      <h2>ค่าเช่า</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">
+        เก็บเป็นประวัติทุกรอบ (ต่อสัญญา/ขึ้นราคา/ส่วนลด) — วันไหนใช้ค่าเช่าเท่าไรจะยึดตามรอบที่ "มีผล ณ วันนั้นจริง" เสมอ ดังนั้นการเปลี่ยนค่าเช่าใหม่จะ<strong>ไม่กระทบกำไรที่คำนวณไปแล้วของเดือนก่อนหน้า</strong>
+      </p>
+      ${
+        currentRent
+          ? `<div class="row-item" style="border-bottom:none;">
+              <span class="label">ค่าเช่าปัจจุบัน <span style="color:var(--ink-soft)">(มีผลตั้งแต่ ${currentRent.effective_from})</span></span>
+              <span class="value" style="font-size:20px;">${formatMoney(currentRent.monthly_rent)}/เดือน</span>
+            </div>`
+          : `<div class="empty-state"><p>ยังไม่ได้ตั้งค่าเช่าเลย เพิ่มรอบแรกด้านล่างได้เลย</p></div>`
+      }
+      <details style="margin-top:16px;">
+        <summary style="cursor:pointer;font-weight:700;">ดูประวัติค่าเช่าทั้งหมด (${rentHistory.length})</summary>
+        <div class="row-list" style="margin-top:8px;">${rentHistoryHtml}</div>
+        ${currentRent ? `<button class="btn-danger-text" id="btn-remove-latest-rent" style="margin-top:4px;">ยกเลิกรอบล่าสุด (เผื่อกดผิด)</button>` : ''}
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>เปลี่ยน/เพิ่มค่าเช่ารอบใหม่</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label for="rent-amount">ค่าเช่าใหม่ (บาท/เดือน)</label>
+          <input type="number" id="rent-amount" min="0" value="${currentRent ? currentRent.monthly_rent : ''}" />
+        </div>
+        <div class="field">
+          <label for="rent-effective-from">มีผลตั้งแต่วันที่</label>
+          <input type="date" id="rent-effective-from" value="${todayStr()}" min="${currentRent ? currentRent.effective_from : ''}" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="rent-note">หมายเหตุ (ไม่บังคับ)</label>
+        <input type="text" id="rent-note" placeholder="เช่น ต่อสัญญาปีที่ 3 ลด 5%, ขึ้นค่าเช่าตามสัญญา" />
+      </div>
+      <button class="btn btn-ghost" id="btn-add-rent">+ บันทึกรอบค่าเช่าใหม่</button>
+    </div>
+
+    <div class="card">
+      <h2>ค่าน้ำ / ค่าไฟ</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">
+        บันทึกสรุป<strong>ตอนสิ้นเดือน</strong>เดือนละครั้ง (ไม่ต้องจดมิเตอร์รายวัน) ระบบจะหารเฉลี่ยเป็นต้นทุน/วันให้เอง
+        ${
+          currentMonthUtility
+            ? ''
+            : utilityFallback && utilityFallback.source_month
+            ? `เดือนนี้ (${thisMonth}) ยังไม่ได้กรอกบิล — ใช้ค่าประมาณการจากเดือน ${utilityFallback.source_month} แทนไปก่อน (${formatMoney(utilityFallback.value)}/วัน)`
+            : 'ยังไม่เคยกรอกบิลเดือนไหนเลย ค่าใช้จ่ายส่วนนี้จะยังไม่ถูกนับใน P&L จนกว่าจะกรอกครั้งแรก'
+        }
+      </p>
+      <div class="field-grid">
+        <div class="field">
+          <label for="util-period">เดือนที่บันทึก</label>
+          <input type="month" id="util-period" value="${currentMonthUtility ? currentMonthUtility.period_month : thisMonth}" max="${thisMonth}" />
+        </div>
+        <div class="field">
+          <label for="util-days">จำนวนวันที่เปิดร้านในเดือนนี้</label>
+          <input type="number" id="util-days" min="1" max="31" placeholder="ปล่อยว่าง = เต็มเดือน" value="${currentMonthUtility && currentMonthUtility.days_in_period ? currentMonthUtility.days_in_period : ''}" />
+        </div>
+      </div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="util-water">ค่าน้ำ (บาท)</label>
+          <input type="number" id="util-water" min="0" value="${currentMonthUtility ? currentMonthUtility.water_bill_amount : ''}" />
+        </div>
+        <div class="field">
+          <label for="util-electric">ค่าไฟ (บาท)</label>
+          <input type="number" id="util-electric" min="0" value="${currentMonthUtility ? currentMonthUtility.electric_bill_amount : ''}" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="util-note">หมายเหตุ (ไม่บังคับ)</label>
+        <input type="text" id="util-note" value="${currentMonthUtility && currentMonthUtility.note ? escapeHtml(currentMonthUtility.note) : ''}" />
+      </div>
+      <button class="btn btn-ghost" id="btn-save-utility">${currentMonthUtility ? 'บันทึกการแก้ไขบิลเดือนนี้' : '+ บันทึกบิลเดือนนี้'}</button>
+
+      <details style="margin-top:18px;">
+        <summary style="cursor:pointer;font-weight:700;">ดูประวัติบิลรายเดือน (${utilityHistory.length})</summary>
+        <div class="row-list" style="margin-top:8px;">${utilityHistoryHtml}</div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>ค่าแก๊สหุงต้ม</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">
+        บันทึกทุกครั้งที่<strong>สั่งซื้อ/เติมถัง</strong> (ไม่ผูกกับรอบเดือน เพราะหมดแล้วสั่งเพิ่มไม่ตรงรอบ) ระบบจะประมาณต้นทุน/วันจากอัตราการใช้ย้อนหลัง ${gasEstimate.basis_days || 30} วันให้อัตโนมัติ
+        ${gasEstimate.purchases_count > 0 ? ` — ตอนนี้ประมาณ ${formatMoney(gasEstimate.value)}/วัน${gasEstimate.is_estimated ? ' (ประมาณการจากประวัติ เพราะช่วงนี้ยังไม่มีการซื้อใหม่)' : ''}` : ' — ยังไม่มีข้อมูลพอประมาณการ'}
+      </p>
+      <div class="field-grid">
+        <div class="field">
+          <label for="gas-date">วันที่ซื้อ</label>
+          <input type="date" id="gas-date" value="${todayStr()}" max="${todayStr()}" />
+        </div>
+        <div class="field">
+          <label for="gas-tanks">จำนวนถัง</label>
+          <input type="number" id="gas-tanks" min="1" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="gas-cost">ราคาต่อถัง (บาท)</label>
+        <input type="number" id="gas-cost" min="0" value="${lastGasCost}" />
+      </div>
+      <div class="field">
+        <label for="gas-note">หมายเหตุ (ไม่บังคับ)</label>
+        <input type="text" id="gas-note" placeholder="เช่น ร้านประจำ, ราคาขึ้นรอบนี้" />
+      </div>
+      <button class="btn btn-ghost" id="btn-add-gas">+ บันทึกการซื้อแก๊ส</button>
+
+      <details style="margin-top:18px;">
+        <summary style="cursor:pointer;font-weight:700;">ดูประวัติการซื้อแก๊ส (${gasHistory.length})</summary>
+        <div class="row-list" style="margin-top:8px;">${gasHistoryHtml}</div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>ค่าใช้จ่ายประจำอื่นๆ</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">สำหรับรายการอื่นที่ไม่ใช่ค่าเช่า/น้ำ/ไฟ/แก๊ส เช่น ค่าเน็ต ค่าแรงประจำ — คิดเฉลี่ยเป็นต้นทุนรายวันในหน้าสรุปอัตโนมัติ<br/><strong style="color:var(--ember-deep)">อย่าเพิ่ม "ค่าเช่า", "ค่าน้ำ/ค่าไฟ" หรือ "ค่าแก๊ส" ที่นี่ซ้ำ</strong> เพราะสามรายการนี้ย้ายไปจัดการในการ์ดด้านบนแล้ว ถ้ายังมีของเก่าค้างอยู่ ให้กดลบทิ้ง ไม่งั้นจะถูกนับซ้ำ</p>
       <div class="row-list">${expensesListHtml}</div>
     </div>
 
@@ -2144,7 +2607,7 @@ async function renderFinance() {
       <h2>เพิ่มค่าใช้จ่ายประจำ</h2>
       <div class="field">
         <label for="exp-name">ชื่อรายการ</label>
-        <input type="text" id="exp-name" placeholder="เช่น ค่าเช่าร้าน, ค่าเน็ต" />
+        <input type="text" id="exp-name" placeholder="เช่น ค่าเน็ต, ค่าแรงประจำ (ไม่ใช่ค่าเช่า/น้ำ/ไฟ)" />
       </div>
       <div class="field-grid">
         <div class="field">
@@ -2208,8 +2671,115 @@ async function renderFinance() {
     </div>
   `;
 
+  document.getElementById('btn-add-rent').addEventListener('click', async () => {
+    const monthly_rent = Number(document.getElementById('rent-amount').value);
+    const effective_from = document.getElementById('rent-effective-from').value;
+    const note = document.getElementById('rent-note').value.trim() || null;
+    if (!(monthly_rent >= 0)) { showToast('กรุณาใส่ค่าเช่าให้ถูกต้อง'); return; }
+    if (!effective_from) { showToast('กรุณาเลือกวันที่เริ่มมีผล'); return; }
+    const futureNote = effective_from > todayStr() ? ` (มีผลในอนาคต — ค่าเช่าปัจจุบันยังใช้ต่อไปจนถึง ${effective_from})` : '';
+    if (!confirm(`ยืนยันบันทึกค่าเช่าใหม่ ${formatMoney(monthly_rent)}/เดือน ตั้งแต่วันที่ ${effective_from}?${futureNote}`)) return;
+    try {
+      const result = await addRentChange({ monthly_rent, effective_from, note });
+      showToast(
+        result.regenerated_dates_count > 0
+          ? `บันทึกรอบค่าเช่าใหม่สำเร็จ — อัปเดต P&L ย้อนหลังแล้ว ${result.regenerated_dates_count} วัน`
+          : 'บันทึกรอบค่าเช่าใหม่สำเร็จ'
+      );
+      renderFinance();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  const removeLatestRentBtn = document.getElementById('btn-remove-latest-rent');
+  if (removeLatestRentBtn) {
+    removeLatestRentBtn.addEventListener('click', async () => {
+      if (!confirm('ยกเลิกรอบค่าเช่าล่าสุด? รอบก่อนหน้าจะกลับมาเป็น "ปัจจุบัน" แทน')) return;
+      try {
+        await removeLatestRentChange();
+        showToast('ยกเลิกรอบล่าสุดแล้ว');
+        renderFinance();
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  }
+
+  // สลับเดือนในฟอร์ม "ค่าน้ำ/ไฟ" ต้องโหลดข้อมูลของเดือนนั้นมาแสดงใหม่เสมอ ไม่งั้นตัวเลขของเดือนที่เพิ่งดูอยู่
+  // จะค้างอยู่ในช่อง แล้วกดบันทึกทับเดือนอื่นโดยไม่ตั้งใจ
+  document.getElementById('util-period').addEventListener('change', async (e) => {
+    const period = e.target.value;
+    if (!period) return;
+    const existing = await getUtilityForMonth(period);
+    document.getElementById('util-water').value = existing ? existing.water_bill_amount : '';
+    document.getElementById('util-electric').value = existing ? existing.electric_bill_amount : '';
+    document.getElementById('util-days').value = existing && existing.days_in_period ? existing.days_in_period : '';
+    document.getElementById('util-note').value = existing && existing.note ? existing.note : '';
+    document.getElementById('btn-save-utility').textContent = existing ? 'บันทึกการแก้ไขบิลเดือนนี้' : '+ บันทึกบิลเดือนนี้';
+  });
+
+  document.getElementById('btn-save-utility').addEventListener('click', async () => {
+    const period_month = document.getElementById('util-period').value;
+    if (!period_month) { showToast('กรุณาเลือกเดือน'); return; }
+    try {
+      const result = await recordMonthlyUtility({
+        period_month,
+        water_bill_amount: Number(document.getElementById('util-water').value) || 0,
+        electric_bill_amount: Number(document.getElementById('util-electric').value) || 0,
+        days_in_period: Number(document.getElementById('util-days').value) || null,
+        note: document.getElementById('util-note').value.trim() || null,
+      });
+      showToast(
+        result.regenerated_dates_count > 0
+          ? `บันทึกบิลของเดือน ${period_month} สำเร็จ — อัปเดต P&L ย้อนหลังแล้ว ${result.regenerated_dates_count} วัน`
+          : `บันทึกบิลของเดือน ${period_month} สำเร็จ`
+      );
+      renderFinance();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-utility]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบบิลเดือนนี้? วันในเดือนนี้จะกลับไปใช้ค่าประมาณการจากเดือนอื่นแทน')) return;
+      await removeMonthlyUtility(btn.dataset.removeUtility);
+      showToast('ลบบิลเดือนนั้นแล้ว');
+      renderFinance();
+    });
+  });
+
+  document.getElementById('btn-add-gas').addEventListener('click', async () => {
+    const purchase_date = document.getElementById('gas-date').value;
+    const tanks_qty = Number(document.getElementById('gas-tanks').value);
+    const cost_per_tank = Number(document.getElementById('gas-cost').value);
+    const note = document.getElementById('gas-note').value.trim() || null;
+    try {
+      const result = await recordGasPurchase({ purchase_date, tanks_qty, cost_per_tank, note });
+      showToast(
+        result.regenerated_dates_count > 0
+          ? `บันทึกการซื้อแก๊สสำเร็จ — อัปเดตค่าประมาณการย้อนหลังแล้ว ${result.regenerated_dates_count} วัน`
+          : 'บันทึกการซื้อแก๊สสำเร็จ'
+      );
+      renderFinance();
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+
+  document.querySelectorAll('[data-remove-gas]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบรายการซื้อแก๊สนี้? ค่าประมาณการรายวันของช่วงนั้นจะเปลี่ยนไปตาม')) return;
+      await removeGasPurchase(btn.dataset.removeGas);
+      showToast('ลบรายการซื้อแก๊สแล้ว');
+      renderFinance();
+    });
+  });
+
   document.getElementById('btn-add-expense').addEventListener('click', async () => {
     const name = document.getElementById('exp-name').value.trim();
+    if (/เช่า|น้ำ|ไฟ|แก๊ส|gas/i.test(name) && !confirm(`"${name}" ฟังดูคล้ายค่าเช่า/น้ำ/ไฟ/แก๊ส ซึ่งมีการ์ดจัดการแยกไว้ด้านบนแล้ว (กันนับซ้ำ) ยืนยันว่าต้องการเพิ่มเป็นค่าใช้จ่ายทั่วไปจริงๆ?`)) return;
     if (!name) { showToast('กรุณาใส่ชื่อรายการ'); return; }
     try {
       await createOperatingExpense({
@@ -2844,7 +3414,13 @@ if ('serviceWorker' in navigator) {
 }
 
 // เผื่อ debug ผ่าน browser devtools console (เช่น window.__app.db.daily_entries.toArray())
-window.__app = { db, getSetting, setSetting, listOverdueStockCounts, recordPurchase, recordStockCount, getHeadcountSummary };
+window.__app = {
+  db, getSetting, setSetting, listOverdueStockCounts, recordPurchase, recordStockCount, getHeadcountSummary,
+  addRentChange, getRentForDate, getCurrentRent, getRentHistory, removeLatestRentChange, getDailyRentCost,
+  recordMonthlyUtility, getUtilityForMonth, listUtilityHistory, getDailyUtilityCost, removeMonthlyUtility,
+  recordGasPurchase, listGasPurchases, getDailyGasCost, removeGasPurchase,
+  regenerateSummariesInRange,
+};
 
 // ------------------------------------------------------------
 // Boot

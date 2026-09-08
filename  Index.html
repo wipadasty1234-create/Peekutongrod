@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Ko-Ta-Ra-Kumm · โค ตะ ระ คุ้ม</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Sarabun:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --navy:#0B1D3A;--navy2:#0F2850;--blue:#1E4DB7;--blue2:#2D62D9;--bluebg:#EEF2FB;--blue50:#F2F5FC;
+  --yellow:#F5C800;--yellowlt:#FFF3A0;--yellowdk:#C9A200;
+  --white:#fff;--off:#F7F8FA;
+  --g50:#F9FAFB;--g100:#EFF1F5;--g200:#DDE1EA;--g400:#8F97A8;--g600:#4A5568;--g800:#1A202C;
+  --sh:0 2px 12px rgba(11,29,58,0.08);--shmd:0 8px 28px rgba(11,29,58,0.14);
+  --r:16px;--rsm:10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{font-family:'Sarabun',sans-serif;background:var(--blue50);color:var(--g800);min-height:100vh;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
+.cp{font-family:'Chakra Petch',sans-serif;}
+
+/* ── HEADER ── */
+header{background:var(--navy);padding:22px 20px 30px;text-align:center;position:relative;overflow:hidden;}
+header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:4px;background:var(--yellow);}
+header::before{content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,0.035) 1px,transparent 1px);background-size:26px 26px;pointer-events:none;}
+.brand{display:inline-flex;align-items:center;gap:7px;margin-bottom:12px;}
+.bdot{width:6px;height:6px;background:var(--yellow);border-radius:50%;}
+.bname{font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:rgba(255,255,255,0.38);letter-spacing:3px;text-transform:uppercase;}
+.htitle{font-family:'Chakra Petch',sans-serif;font-size:clamp(24px,6.5vw,40px);font-weight:700;color:#fff;line-height:1.1;margin-bottom:7px;}
+.htitle em{font-style:normal;color:var(--yellow);}
+.hsub{font-size:13px;color:rgba(255,255,255,0.38);}
+.chips{display:flex;justify-content:center;flex-wrap:wrap;gap:5px;margin-top:12px;}
+.chip{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.4);border-radius:100px;padding:3px 10px;font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:500;letter-spacing:.5px;}
+
+/* ── TAB NAV ── */
+.tabnav{background:var(--navy2);border-bottom:3px solid rgba(255,255,255,0.06);display:flex;position:sticky;top:0;z-index:100;}
+.tab{flex:1;padding:13px 4px;text-align:center;font-family:'Chakra Petch',sans-serif;font-size:11px;font-weight:600;color:rgba(255,255,255,0.38);letter-spacing:.5px;text-transform:uppercase;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px;transition:color .18s,border-color .18s;user-select:none;}
+.tab.on{color:var(--yellow);border-color:var(--yellow);}
+.tab-num{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.1);font-size:9px;margin-right:5px;transition:background .18s;}
+.tab.on .tab-num{background:var(--yellow);color:var(--navy);}
+.tab-done{background:rgba(46,213,115,0.25);color:#2ED573;}
+
+/* ── PAGES ── */
+.page{display:none;max-width:600px;margin:0 auto;padding:14px 14px 80px;}
+.page.on{display:block;}
+
+/* ── CARDS ── */
+.card{background:var(--white);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:14px;overflow:hidden;border:1px solid var(--g100);}
+.ch{padding:14px 18px 12px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:10px;}
+.ci{width:30px;height:30px;background:var(--bluebg);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+.ci.y{background:#FFF9D0;}.ci.g{background:#E6FAF0;}
+.ct{font-family:'Chakra Petch',sans-serif;font-size:13px;font-weight:700;color:var(--navy);letter-spacing:.3px;}
+.cb{padding:16px 18px 18px;}
+
+/* ── FIELDS ── */
+.f{margin-bottom:12px;}.f:last-child{margin-bottom:0;}
+label{display:block;font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:var(--g600);margin-bottom:5px;letter-spacing:.8px;text-transform:uppercase;}
+label .opt{font-family:'Sarabun',sans-serif;font-weight:400;color:var(--g400);text-transform:none;letter-spacing:0;font-size:11px;}
+input,select{width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:var(--rsm);font-family:'Sarabun',sans-serif;font-size:15px;color:var(--g800);background:var(--off);outline:none;-webkit-appearance:none;transition:border-color .15s,box-shadow .15s,background .15s;}
+input:focus,select:focus{border-color:var(--blue2);box-shadow:0 0 0 3px rgba(30,77,183,0.1);background:var(--white);}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+
+/* ── A/B PANELS ── */
+.ab{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+.op{border:1.5px solid var(--g200);border-radius:var(--rsm);padding:12px;transition:border-color .2s,background .2s,box-shadow .2s;}
+.op.wa{border-color:var(--blue);background:#F0F5FF;box-shadow:0 0 0 3px rgba(30,77,183,0.08);}
+.op.wb{border-color:var(--yellowdk);background:#FFFCEB;box-shadow:0 0 0 3px rgba(201,162,0,0.1);}
+.ol{font-family:'Chakra Petch',sans-serif;font-size:22px;font-weight:700;margin-bottom:8px;}
+.la{color:var(--blue);}.lb{color:var(--yellowdk);}
+.drop{border:1.5px dashed var(--g200);border-radius:8px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative;margin-bottom:9px;transition:border-color .15s;}
+.drop:hover{border-color:var(--blue2);}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.di{font-size:18px;margin-bottom:2px;}.dt{font-size:10px;color:var(--g400);}
+.of .f{margin-bottom:6px;}.of label{font-size:10px;margin-bottom:3px;}
+.of input,.of select{font-size:13px;padding:7px 9px;}
+.m2{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+
+/* ── UNIT SYNC ── */
+.unit-sync{font-family:'Chakra Petch',sans-serif;font-size:10px;color:var(--blue2);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:5px;opacity:0;transition:opacity .2s;}
+.unit-sync.show{opacity:1;}
+
+/* ── CALC BUTTON ── */
+.btn-calc{width:100%;background:var(--navy);color:var(--yellow);border:none;border-radius:var(--r);padding:15px;font-family:'Chakra Petch',sans-serif;font-size:16px;font-weight:700;cursor:pointer;margin-top:14px;letter-spacing:.5px;transition:background .15s,transform .1s;display:flex;align-items:center;justify-content:center;gap:8px;}
+.btn-calc:hover{background:var(--navy2);transform:translateY(-1px);}
+.btn-calc:active{transform:scale(0.98);}
+
+/* ── LIVE BADGE ── */
+.live-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(46,213,115,0.12);border:1px solid rgba(46,213,115,0.3);border-radius:100px;padding:3px 10px;font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:#1a7a45;margin-bottom:12px;}
+.live-dot{width:6px;height:6px;border-radius:50%;background:#2ED573;animation:blink 1.5s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.3;}}
+
+/* ── RESULT CARDS ── */
+.winner-block{background:var(--navy);border-radius:var(--r);padding:18px 16px 15px;text-align:center;margin-bottom:12px;position:relative;overflow:hidden;}
+.winner-block::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--yellow);}
+.we{font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:var(--yellow);letter-spacing:2.5px;text-transform:uppercase;margin-bottom:5px;}
+.wn{font-family:'Chakra Petch',sans-serif;font-size:20px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:3px;}
+.ws{font-size:12px;color:rgba(255,255,255,0.38);}
+
+.cr{display:grid;grid-template-columns:1fr 38px 1fr;gap:7px;align-items:center;margin-bottom:11px;}
+.cb2{border-radius:var(--rsm);padding:12px 9px;text-align:center;}
+.cb2.win{background:var(--blue50);border:2px solid var(--blue);}
+.cb2.lose{background:var(--off);border:1.5px solid var(--g200);}
+.cbl{font-family:'Chakra Petch',sans-serif;font-size:9px;font-weight:600;color:var(--g400);text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px;}
+.cbn{font-family:'Chakra Petch',sans-serif;font-size:12px;font-weight:600;margin-bottom:2px;color:var(--g800);}
+.cbp{font-family:'Chakra Petch',sans-serif;font-size:20px;font-weight:700;color:var(--blue);}
+.cb2.lose .cbp{color:var(--g400);}
+.cbu{font-size:10px;color:var(--g400);margin-top:1px;}
+.vsp{width:38px;height:38px;border-radius:50%;background:var(--navy);color:var(--yellow);display:flex;align-items:center;justify-content:center;font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:700;flex-shrink:0;}
+
+.bw{margin:9px 0 12px;}
+.bt{display:flex;justify-content:space-between;font-family:'Chakra Petch',sans-serif;font-size:11px;color:var(--g400);margin-bottom:5px;}
+.btr{background:var(--g100);border-radius:100px;height:7px;overflow:hidden;}
+.bfill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--blue),var(--yellow));transition:width .8s cubic-bezier(.4,0,.2,1);}
+.s4{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.sb{background:var(--off);border:1px solid var(--g100);border-radius:var(--rsm);padding:12px;text-align:center;}
+.sv{font-family:'Chakra Petch',sans-serif;font-size:17px;font-weight:700;color:var(--navy);}
+.sl{font-size:11px;color:var(--g400);margin-top:2px;}
+.sb.acc{background:var(--navy);border-color:var(--navy);}
+.sb.acc .sv{color:var(--yellow);}.sb.acc .sl{color:rgba(255,255,255,0.35);}
+
+/* ── POST KIT ── */
+.kit-wrap{display:grid;gap:10px;}
+.kit-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.kit-label{font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:var(--g400);text-transform:uppercase;letter-spacing:1px;}
+.kit-copy{background:var(--navy);color:var(--yellow);border:none;border-radius:8px;padding:6px 14px;font-family:'Chakra Petch',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:background .15s;letter-spacing:.3px;}
+.kit-copy:hover{background:var(--navy2);}
+.kit-copy.ok{background:#1a7a45;color:#fff;}
+
+.hooks-grid{display:grid;gap:6px;max-height:320px;overflow-y:auto;padding-right:2px;}
+.hrow{display:flex;align-items:flex-start;gap:8px;background:var(--off);border:1px solid var(--g100);border-radius:var(--rsm);padding:9px 11px;cursor:pointer;transition:border-color .13s,background .13s;}
+.hrow:hover{border-color:var(--blue2);background:var(--bluebg);}
+.hrow.selected{border-color:var(--blue);background:var(--bluebg);}
+.hnum{font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;color:var(--g400);min-width:18px;padding-top:1px;}
+.htxt{font-size:13px;color:var(--g800);flex:1;line-height:1.45;}
+.hck{font-size:14px;opacity:.3;transition:opacity .13s;flex-shrink:0;margin-top:1px;}
+.hrow:hover .hck,.hrow.selected .hck{opacity:1;}
+
+.ctabs{display:flex;gap:5px;margin-bottom:10px;}
+.ctab{padding:6px 13px;border-radius:100px;border:1.5px solid var(--g200);background:var(--white);font-family:'Chakra Petch',sans-serif;font-size:11px;font-weight:600;color:var(--g600);cursor:pointer;white-space:nowrap;transition:all .13s;letter-spacing:.3px;}
+.ctab.on{background:var(--navy);color:var(--yellow);border-color:var(--navy);}
+.capbox{background:var(--off);border:1px solid var(--g100);border-radius:var(--rsm);padding:13px;font-size:13px;line-height:1.8;color:var(--g800);white-space:pre-wrap;}
+
+.copy-all{width:100%;background:var(--yellow);color:var(--navy);border:none;border-radius:var(--r);padding:13px;font-family:'Chakra Petch',sans-serif;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s,transform .1s;margin-top:10px;letter-spacing:.3px;}
+.copy-all:hover{background:var(--yellowlt);transform:translateY(-1px);}
+.copy-all.ok{background:#2ED573;color:var(--white);}
+
+/* ── IMAGE GEN ── */
+.trow{display:flex;gap:7px;overflow-x:auto;padding-bottom:5px;margin-bottom:12px;}
+.tth{flex-shrink:0;width:84px;border-radius:8px;overflow:hidden;border:2px solid var(--g200);cursor:pointer;transition:border-color .13s,transform .1s;}
+.tth.on{border-color:var(--blue);transform:scale(1.05);}
+.tin{height:100px;display:flex;align-items:center;justify-content:center;font-size:19px;}
+.tlbl{background:var(--off);padding:4px;font-family:'Chakra Petch',sans-serif;font-size:9px;font-weight:600;text-align:center;color:var(--g600);letter-spacing:.3px;}
+.t1 .tin{background:#0B1D3A;}.t2 .tin{background:#F4F6FA;}.t3 .tin{background:#0D1117;}.t4 .tin{background:#1E4DB7;}.t5 .tin{background:#0f1b35;}
+.cw{border-radius:var(--rsm);overflow:hidden;margin-bottom:12px;box-shadow:var(--shmd);}
+.cw canvas{display:block;width:100%;height:auto;}
+.btn-exp{width:100%;background:var(--navy);color:var(--yellow);border:none;border-radius:var(--r);padding:13px;font-family:'Chakra Petch',sans-serif;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s,transform .1s;letter-spacing:.3px;}
+.btn-exp:hover{background:var(--navy2);transform:translateY(-1px);}
+.egrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px;}
+.btn-lt{background:var(--off);border:1.5px solid var(--g200);color:var(--navy);border-radius:var(--r);padding:12px;font-family:'Chakra Petch',sans-serif;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .13s;letter-spacing:.3px;}
+.btn-lt:hover{background:var(--bluebg);border-color:var(--blue);}
+.divr{display:flex;align-items:center;gap:8px;font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--g400);margin:14px 0 11px;}
+.divr::before,.divr::after{content:'';flex:1;height:1px;background:var(--g100);}
+
+/* ── NEXT PAGE BTN ── */
+.btn-next{width:100%;background:var(--blue);color:var(--white);border:none;border-radius:var(--r);padding:15px;font-family:'Chakra Petch',sans-serif;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s,transform .1s;margin-top:6px;letter-spacing:.3px;}
+.btn-next:hover{background:var(--blue2);transform:translateY(-1px);}
+
+/* ── WATERMARK SETTINGS ── */
+.wm-preview{background:var(--navy);border-radius:var(--rsm);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;margin-top:10px;}
+.wm-preview-txt{font-family:'Chakra Petch',sans-serif;font-size:11px;color:var(--yellow);letter-spacing:1px;}
+.wm-preview-sub{font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--g100);}
+.toggle-row:last-child{border-bottom:none;padding-bottom:0;}
+.toggle-lbl{font-family:'Chakra Petch',sans-serif;font-size:11px;font-weight:600;color:var(--g600);letter-spacing:.5px;}
+.toggle-sub{font-size:11px;color:var(--g400);margin-top:2px;}
+.toggle{position:relative;width:42px;height:24px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;inset:0;background:var(--g200);border-radius:100px;cursor:pointer;transition:background .2s;}
+.toggle-slider::before{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .2s;}
+.toggle input:checked+.toggle-slider{background:var(--blue);}
+.toggle input:checked+.toggle-slider::before{transform:translateX(18px);}
+
+/* ── HISTORY ── */
+.hist-item{background:var(--off);border:1px solid var(--g100);border-radius:var(--rsm);padding:11px 13px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:border-color .13s,background .13s;margin-bottom:7px;}
+.hist-item:hover{border-color:var(--blue2);background:var(--bluebg);}
+.hist-badge{width:32px;height:32px;border-radius:8px;background:var(--navy);color:var(--yellow);font-family:'Chakra Petch',sans-serif;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:.3px;}
+.hist-info{flex:1;min-width:0;}
+.hist-pn{font-family:'Chakra Petch',sans-serif;font-size:12px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hist-sub{font-size:11px;color:var(--g400);margin-top:2px;}
+.hist-del{font-size:14px;opacity:.35;transition:opacity .13s;flex-shrink:0;cursor:pointer;padding:4px;}
+.hist-del:hover{opacity:1;}
+.hist-empty{text-align:center;padding:28px;font-family:'Chakra Petch',sans-serif;font-size:11px;color:var(--g400);letter-spacing:.5px;}
+.btn-clr{background:transparent;border:1.5px solid var(--g200);color:var(--g600);border-radius:var(--rsm);padding:7px 14px;font-family:'Chakra Petch',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:all .13s;}
+.btn-clr:hover{border-color:#E53E3E;color:#E53E3E;}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(55px);background:var(--navy);color:#fff;padding:10px 20px;border-radius:100px;font-family:'Chakra Petch',sans-serif;font-size:12px;font-weight:600;letter-spacing:.3px;z-index:999;pointer-events:none;white-space:nowrap;transition:transform .25s cubic-bezier(.4,0,.2,1);border-bottom:2px solid var(--yellow);}
+.toast.show{transform:translateX(-50%) translateY(0);}
+
+@keyframes up{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.ani{animation:up .28s ease both;}
+footer{text-align:center;padding:16px;font-family:'Chakra Petch',sans-serif;font-size:10px;color:var(--g400);letter-spacing:1px;}
+::-webkit-scrollbar{width:3px;height:3px;}
+::-webkit-scrollbar-thumb{background:var(--g200);border-radius:2px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><div class="bdot"></div><span class="bname">Ko-Ta-Ra-Kumm · โค ตะ ระ คุ้ม</span><div class="bdot"></div></div>
+  <h1 class="htitle">ซื้อแบบไหน<br><em>คุ้มกว่ากัน?</em></h1>
+  <p class="hsub">คำนวณต้นทุนต่อหน่วย · สร้างภาพโพสต์</p>
+  <div class="chips"><span class="chip">SHOPEE</span><span class="chip">TIKTOK</span><span class="chip">FACEBOOK</span><span class="chip">AFFILIATE</span></div>
+</header>
+
+<!-- TAB NAV -->
+<nav class="tabnav">
+  <div class="tab on" id="t0" onclick="goTab(0)"><span class="tab-num">1</span>กรอก</div>
+  <div class="tab" id="t1" onclick="goTab(1)"><span class="tab-num">2</span>ผลลัพธ์</div>
+  <div class="tab" id="t2" onclick="goTab(2)"><span class="tab-num">3</span>โพสต์</div>
+  <div class="tab" id="t3" onclick="goTab(3)"><span class="tab-num">4</span>ภาพ</div>
+  <div class="tab" id="t4" onclick="goTab(4)"><span class="tab-num">☰</span>ประวัติ</div>
+</nav>
+
+<!-- ═══════════════════════════════════════════
+     PAGE 0 — กรอกข้อมูล
+═══════════════════════════════════════════ -->
+<div class="page on" id="p0">
+
+  <div class="card">
+    <div class="ch"><div class="ci">📦</div><div class="ct">ข้อมูลสินค้า</div></div>
+    <div class="cb">
+      <div class="f"><label>ชื่อสินค้า</label><input type="text" id="pname" placeholder="เช่น ผงซักฟอก Ariel, นมอัลมอนด์..." oninput="liveCalc()"/></div>
+      <div class="g2">
+        <div class="f" style="margin-bottom:0"><label>หมวดหมู่</label>
+          <select id="cat"><option value="">เลือกหมวดหมู่</option><option>🧴 ของใช้ในบ้าน</option><option>🥤 อาหาร & เครื่องดื่ม</option><option>💄 ความงาม & สุขภาพ</option><option>👕 เสื้อผ้า</option><option>📱 อิเล็กทรอนิกส์</option><option>🐾 สัตว์เลี้ยง</option><option>🌿 อาหารเสริม</option><option>⚙️ อื่นๆ</option></select>
+        </div>
+        <div class="f" style="margin-bottom:0"><label>ลิงก์ Affiliate <span class="opt">(ไม่บังคับ)</span></label><input type="url" id="aff" placeholder="https://..."/></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><div class="ci">⚖️</div><div class="ct">เปรียบเทียบ 2 ตัวเลือก</div></div>
+    <div class="cb">
+      <div id="usync" class="unit-sync">⟳ หน่วยสองฝั่งต่างกัน — ระบบแปลงให้อัตโนมัติ</div>
+      <div class="ab">
+        <!-- A -->
+        <div class="op" id="pa">
+          <div class="ol la">A</div>
+          <div class="drop"><input type="file" accept="image/*" onchange="upImg('a',event)"/><div id="pva"><div class="di">🖼️</div><div class="dt">อัปโหลดรูป</div></div></div>
+          <div class="of">
+            <div class="f"><label>ชื่อแพ็ก</label><input type="text" id="an" placeholder="แบบเล็ก…" oninput="liveCalc()"/></div>
+            <div class="m2">
+              <div class="f" style="margin-bottom:0"><label>จำนวน</label><input type="number" id="aq" placeholder="100" min="0" step="any" oninput="liveCalc()"/></div>
+              <div class="f" style="margin-bottom:0"><label>หน่วย</label>
+                <select id="au" onchange="syncUnit();liveCalc()">
+                  <option>กรัม</option><option>กิโลกรัม</option><option>มล.</option><option>ลิตร</option><option>ชิ้น</option><option>แผ่น</option><option>เม็ด</option><option>ซอง</option><option>กล่อง</option><option>แพ็ก</option><option>ขวด</option>
+                </select>
+              </div>
+            </div>
+            <div class="f" style="margin-top:7px;margin-bottom:0"><label>ราคา (บาท)</label><input type="number" id="ap" placeholder="0.00" min="0" step="any" oninput="liveCalc()"/></div>
+          </div>
+        </div>
+        <!-- B -->
+        <div class="op" id="pb">
+          <div class="ol lb">B</div>
+          <div class="drop"><input type="file" accept="image/*" onchange="upImg('b',event)"/><div id="pvb"><div class="di">🖼️</div><div class="dt">อัปโหลดรูป</div></div></div>
+          <div class="of">
+            <div class="f"><label>ชื่อแพ็ก</label><input type="text" id="bn" placeholder="แบบใหญ่…" oninput="liveCalc()"/></div>
+            <div class="m2">
+              <div class="f" style="margin-bottom:0"><label>จำนวน</label><input type="number" id="bq" placeholder="500" min="0" step="any" oninput="liveCalc()"/></div>
+              <div class="f" style="margin-bottom:0"><label>หน่วย</label>
+                <select id="bu" onchange="liveCalc()">
+                  <option>กรัม</option><option>กิโลกรัม</option><option>มล.</option><option>ลิตร</option><option>ชิ้น</option><option>แผ่น</option><option>เม็ด</option><option>ซอง</option><option>กล่อง</option><option>แพ็ก</option><option>ขวด</option>
+                </select>
+              </div>
+            </div>
+            <div class="f" style="margin-top:7px;margin-bottom:0"><label>ราคา (บาท)</label><input type="number" id="bp" placeholder="0.00" min="0" step="any" oninput="liveCalc()"/></div>
+          </div>
+        </div>
+      </div>
+      <button class="btn-calc" onclick="doCalc()">คำนวณ & ดูผลลัพธ์ →</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════
+     PAGE 1 — ผลลัพธ์
+═══════════════════════════════════════════ -->
+<div class="page" id="p1">
+  <div id="livebadge" class="live-badge" style="display:none;"><div class="live-dot"></div>LIVE · อัปเดตอัตโนมัติ</div>
+
+  <div class="card ani">
+    <div class="ch"><div class="ci y">🏆</div><div class="ct">ผลการเปรียบเทียบ</div></div>
+    <div class="cb">
+      <div class="winner-block">
+        <div class="we">แนะนำให้เลือก</div>
+        <div class="wn" id="wn">—</div>
+        <div class="ws" id="ws">—</div>
+      </div>
+      <div class="cr">
+        <div class="cb2" id="bxa"><div class="cbl">ตัวเลือก A</div><div class="cbn" id="ran">—</div><div class="cbp" id="rap">—</div><div class="cbu" id="rau">บาท/หน่วย</div></div>
+        <div class="vsp">VS</div>
+        <div class="cb2" id="bxb"><div class="cbl">ตัวเลือก B</div><div class="cbn" id="rbn">—</div><div class="cbp" id="rbp">—</div><div class="cbu" id="rbu">บาท/หน่วย</div></div>
+      </div>
+      <div class="bw">
+        <div class="bt"><span>ความต่าง</span><span id="ptxt">0%</span></div>
+        <div class="btr"><div class="bfill" id="bar" style="width:0%"></div></div>
+      </div>
+      <div class="s4">
+        <div class="sb"><div class="sv" id="sd">—</div><div class="sl">ต่างกันต่อหน่วย</div></div>
+        <div class="sb acc"><div class="sv" id="sp">—</div><div class="sl">คุ้มกว่า</div></div>
+        <div class="sb"><div class="sv" id="s1">—</div><div class="sl">ประหยัดต่อ 100</div></div>
+        <div class="sb"><div class="sv" id="sk">—</div><div class="sl">ประหยัดต่อ 1,000</div></div>
+      </div>
+    </div>
+  </div>
+  <button class="btn-next" onclick="goTab(2)">สร้างชุดโพสต์ →</button>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     PAGE 2 — ชุดโพสต์ (Hook + Caption)
+═══════════════════════════════════════════ -->
+<div class="page" id="p2">
+  <div class="card ani">
+    <div class="ch"><div class="ci">🪝</div><div class="ct">เลือก Hook</div></div>
+    <div class="cb">
+      <div class="kit-head"><span class="kit-label">คลิกเลือก 1 hook</span><button class="kit-copy" id="hcopy-btn" onclick="copyHook()">คัดลอก Hook</button></div>
+      <div class="hooks-grid" id="hl"></div>
+    </div>
+  </div>
+
+  <div class="card ani">
+    <div class="ch"><div class="ci g">✍️</div><div class="ct">Caption</div></div>
+    <div class="cb">
+      <div class="ctabs">
+        <button class="ctab on" onclick="swc(0,this)">💰 คุ้มค่า</button>
+        <button class="ctab" onclick="swc(1,this)">💵 ประหยัด</button>
+        <button class="ctab" onclick="swc(2,this)">🔥 โปรแรง</button>
+      </div>
+      <div class="capbox" id="ctxt"></div>
+    </div>
+  </div>
+
+  <div class="card ani">
+    <div class="ch"><div class="ci y">📦</div><div class="ct">ชุดโพสต์สำเร็จรูป — Copy ครั้งเดียวจบ</div></div>
+    <div class="cb">
+      <div style="background:var(--off);border:1px solid var(--g100);border-radius:var(--rsm);padding:13px;font-size:12px;line-height:1.8;color:var(--g600);white-space:pre-wrap;" id="fullkit">—</div>
+      <button class="copy-all" id="copy-all-btn" onclick="copyAll()">📋 Copy ชุดโพสต์ทั้งหมด</button>
+    </div>
+  </div>
+
+  <button class="btn-next" onclick="goTab(3)">สร้างภาพโพสต์ →</button>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     PAGE 3 — สร้างภาพ
+═══════════════════════════════════════════ -->
+<div class="page" id="p3">
+
+  <div class="card ani">
+    <div class="ch"><div class="ci">🤫</div><div class="ct">ภาพ 1 — ให้ทายก่อน</div></div>
+    <div class="cb">
+      <div class="egrid">
+        <div class="cw" style="margin-bottom:0"><canvas id="tc1" width="1080" height="1350"></canvas></div>
+        <div class="cw" style="margin-bottom:0"><canvas id="tc2" width="1080" height="1350"></canvas></div>
+      </div>
+      <div class="egrid">
+        <button class="btn-lt" onclick="expCv('tc1','teaser-light')">⬇ Light</button>
+        <button class="btn-exp" onclick="expCv('tc2','teaser-dark')">⬇ Dark</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card ani">
+    <div class="ch"><div class="ci y">🏆</div><div class="ct">ภาพ 2 — เฉลยพร้อมราคา</div></div>
+    <div class="cb">
+      <div class="trow">
+        <div class="tth t1 on" onclick="st(0,this)"><div class="tin">🌙</div><div class="tlbl">DARK NAVY</div></div>
+        <div class="tth t2" onclick="st(1,this)"><div class="tin">☀️</div><div class="tlbl">LIGHT</div></div>
+        <div class="tth t3" onclick="st(2,this)"><div class="tin">🌑</div><div class="tlbl">PURE DARK</div></div>
+        <div class="tth t4" onclick="st(3,this)"><div class="tin">🔵</div><div class="tlbl">BLUE BRAND</div></div>
+        <div class="tth t5" onclick="st(4,this)"><div class="tin">🌊</div><div class="tlbl">DEEP BLUE</div></div>
+      </div>
+      <div class="cw"><canvas id="rc" width="1080" height="1350"></canvas></div>
+      <button class="btn-exp" onclick="expCv('rc','reveal')">⬇ บันทึกภาพเฉลย JPG</button>
+    </div>
+  </div>
+
+</div>
+
+<footer>KO-TA-RA-KUMM · โค ตะ ระ คุ้ม · 2025</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────
+let iA=null,iB=null,R=null,aC=0,aT=0,caps=[],selHook=null,liveTimer=null;
+
+// ── TAB NAVIGATION ─────────────────────────────────────
+function goTab(i){
+  [0,1,2,3].forEach(j=>{
+    document.getElementById('p'+j).classList.toggle('on',j===i);
+    document.getElementById('t'+j).classList.toggle('on',j===i);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ── UNIT SYNC ──────────────────────────────────────────
+const unitMult={'กรัม':1,'กิโลกรัม':1000,'มล.':1,'ลิตร':1000,'ชิ้น':1,'แผ่น':1,'เม็ด':1,'ซอง':1,'กล่อง':1,'แพ็ก':1,'ขวด':1};
+function syncUnit(){
+  const au=document.getElementById('au').value;
+  const bu=document.getElementById('bu').value;
+  const sync=document.getElementById('usync');
+  sync.classList.toggle('show', au!==bu);
+}
+
+// effective qty converting to common base
+function effQty(q,u){
+  return q*(unitMult[u]||1);
+}
+
+// ── LIVE CALC ─────────────────────────────────────────
+function liveCalc(){
+  clearTimeout(liveTimer);
+  liveTimer=setTimeout(()=>{
+    const aq=parseFloat(document.getElementById('aq').value)||0;
+    const ap=parseFloat(document.getElementById('ap').value)||0;
+    const bq=parseFloat(document.getElementById('bq').value)||0;
+    const bp=parseFloat(document.getElementById('bp').value)||0;
+    const au=document.getElementById('au').value;
+    const bu=document.getElementById('bu').value;
+    if(!aq||!ap||!bq||!bp) return;
+
+    const aeq=effQty(aq,au), beq=effQty(bq,bu);
+    const aPpu=ap/aeq, bPpu=bp/beq;
+    const wa=aPpu<=bPpu;
+    document.getElementById('pa').className='op'+(wa?' wa':'');
+    document.getElementById('pb').className='op'+(!wa?' wb':'');
+    syncUnit();
+    updateResult();
+    if(R){rReveal();rTease();}
+  },300);
+}
+
+// ── DO CALC (button) ────────────────────────────────────
+function doCalc(){
+  const pn=document.getElementById('pname').value.trim()||'สินค้า';
+  const aff=document.getElementById('aff').value.trim();
+  const aN=document.getElementById('an').value.trim()||'ตัวเลือก A';
+  const aQ=parseFloat(document.getElementById('aq').value)||0;
+  const aU=document.getElementById('au').value;
+  const aP=parseFloat(document.getElementById('ap').value)||0;
+  const bN=document.getElementById('bn').value.trim()||'ตัวเลือก B';
+  const bQ=parseFloat(document.getElementById('bq').value)||0;
+  const bU=document.getElementById('bu').value;
+  const bP=parseFloat(document.getElementById('bp').value)||0;
+  if(!aQ||!aP||!bQ||!bP){showT('⚠️ กรุณากรอกจำนวนและราคาให้ครบ');return;}
+
+  const aeq=effQty(aQ,aU),beq=effQty(bQ,bU);
+  const aPpu=aP/aeq,bPpu=bP/beq;
+  const win=aPpu<=bPpu?'A':'B';
+  const wP=win==='A'?aPpu:bPpu,lP=win==='A'?bPpu:aPpu;
+  const pct=((lP-wP)/lP)*100,diff=lP-wP;
+  R={pn,aff,win,a:{n:aN,q:aQ,u:aU,p:aP,ppu:aPpu,eff:aeq},b:{n:bN,q:bQ,u:bU,p:bP,ppu:bPpu,eff:beq},pct,diff,s100:diff*100,s1k:diff*1000,save:diff*Math.max(aeq,beq),unit:aU};
+  updateResult(); bHooks(); bCaps(); rTease(); rReveal();
+  // mark tabs done
+  document.getElementById('t0').querySelector('.tab-num').classList.add('tab-done');
+  document.getElementById('livebadge').style.display='flex';
+  goTab(1);
+  showT('✅ คำนวณเรียบร้อย!');
+}
+
+function fmt(n,d=2){return(+n).toLocaleString('th',{maximumFractionDigits:d});}
+function fp(n){return n<10?n.toFixed(4):n.toFixed(2);}
+
+function updateResult(){
+  if(!R)return;
+  const r=R,wn=r.win==='A'?r.a.n:r.b.n;
+  document.getElementById('wn').textContent=`แบบ ${r.win} — ${wn} คุ้มกว่า 🎉`;
+  document.getElementById('ws').textContent=`คุ้มกว่า ${r.pct.toFixed(1)}%  ·  ประหยัดได้ ~${fmt(r.save)} บาท`;
+  const wa=r.win==='A';
+  document.getElementById('bxa').className='cb2 '+(wa?'win':'lose');
+  document.getElementById('bxb').className='cb2 '+(wa?'lose':'win');
+  ['ran','rbn'].forEach((id,i)=>{document.getElementById(id).textContent=[r.a.n,r.b.n][i];});
+  document.getElementById('rap').textContent=fp(r.a.ppu);
+  document.getElementById('rbp').textContent=fp(r.b.ppu);
+  document.getElementById('rau').textContent='บาท/'+r.a.u;
+  document.getElementById('rbu').textContent='บาท/'+r.b.u;
+  document.getElementById('bar').style.width=Math.min(r.pct,100)+'%';
+  document.getElementById('ptxt').textContent=r.pct.toFixed(1)+'%';
+  document.getElementById('sd').textContent=fp(r.diff)+' บาท';
+  document.getElementById('sp').textContent=r.pct.toFixed(1)+'%';
+  document.getElementById('s1').textContent=fmt(r.s100)+' บาท';
+  document.getElementById('sk').textContent=fmt(r.s1k)+' บาท';
+}
+
+// ── IMAGE UPLOAD ────────────────────────────────────────
+function upImg(s,e){
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    const d=ev.target.result;
+    if(s==='a')iA=d;else iB=d;
+    document.getElementById('pv'+s).innerHTML=`<img src="${d}" style="width:100%;height:100%;object-fit:cover;"/>`;
+    if(R){rTease();rReveal();}
+  };r.readAsDataURL(f);
+}
+
+// ── HOOKS ───────────────────────────────────────────────
+function bHooks(){
+  const r=R,pct=r.pct.toFixed(0),sv=fmt(r.save);
+  const wn=r.win==='A'?r.a.n:r.b.n,ls=r.win==='A'?r.b.n:r.a.n,p=r.pn;
+  const hs=[
+    `คนส่วนใหญ่จ่ายแพงกว่า ${pct}% โดยไม่รู้ตัว 😱`,
+    `ซื้อผิดแพ็ก เสียเงินฟรี ${sv} บาท!`,
+    `ต่างกันแค่แพ็ก แต่จ่ายแพงกว่าหลายร้อย`,
+    `ก่อนกดซื้อ ${p} ดูอันนี้ก่อนนะ 👇`,
+    `${pct}% ที่คนไม่รู้เรื่อง ${p}`,
+    `ยังซื้อ ${ls} อยู่เหรอ? เสียเงินฟรีนะ`,
+    `ฉันเพิ่งรู้ว่า ${wn} คุ้มกว่า ${pct}%`,
+    `${p} แพ็กไหนคุ้มสุด? สรุปแล้ว!`,
+    `ถ้าซื้อ ${p} บ่อย อ่านอันนี้ก่อน`,
+    `ประหยัดได้ ${sv} บาท แค่เปลี่ยนแพ็ก`,
+    `ทดสอบแล้ว! ${wn} ชนะขาด 🏆`,
+    `อย่าซื้อ ${p} ก่อนดูอันนี้`,
+    `ราคาต่อหน่วย เปิดหมดเลย 📊`,
+    `แพ็กใหญ่ vs แพ็กเล็ก ใครชนะ?`,
+    `${p} แพ็กไหนคุ้มสุด? เฉลยแล้ว!`,
+    `ไม่มีใครบอกเรื่องนี้มาก่อน เรื่อง ${p}`,
+    `เซฟเงินง่ายๆ แค่เลือกแพ็กให้ถูก`,
+    `เปรียบเทียบจริง ไม่มีโกง`,
+    `Content นี้ประหยัดได้ ${sv} บาท`,
+    `ก่อนช้อปครั้งหน้า Pin อันนี้ไว้ก่อน 📌`
+  ];
+  selHook=null;
+  const el=document.getElementById('hl');el.innerHTML='';
+  hs.forEach((h,i)=>{
+    const d=document.createElement('div');d.className='hrow';
+    d.innerHTML=`<span class="hnum">${String(i+1).padStart(2,'0')}</span><span class="htxt">${h}</span><span class="hck">✓</span>`;
+    d.onclick=()=>{selHook=h;document.querySelectorAll('.hrow').forEach(r=>r.classList.remove('selected'));d.classList.add('selected');buildKit();};
+    el.appendChild(d);
+  });
+}
+
+// ── CAPTIONS ────────────────────────────────────────────
+function bCaps(){
+  const r=R,pct=r.pct.toFixed(1),sv=fmt(r.save);
+  const wn=r.win==='A'?r.a.n:r.b.n,ls=r.win==='A'?r.b.n:r.a.n;
+  const wp=r.win==='A'?fp(r.a.ppu):fp(r.b.ppu),lp=r.win==='A'?fp(r.b.ppu):fp(r.a.ppu);
+  const lk=r.aff?`\n\n🔗 ${r.aff}`:'';
+  const tags=`\n\n#คุ้มค่า #ประหยัดเงิน #${r.pn.replace(/\s+/g,'')} #ShopSmart #KoTaRaKumm`;
+  caps=[
+    `📊 ${r.pn} แบบไหนคุ้มกว่ากัน?\n\n✅ ${wn}: ${wp} บาท/${r.unit}\n❌ ${ls}: ${lp} บาท/${r.unit}\n\n🏆 ${wn} คุ้มกว่า ${pct}%\nประหยัดได้ ~${sv} บาท${lk}${tags}`,
+    `💰 หยุดเสียเงินโดยเปล่าประโยชน์!\n\n🔴 ${ls} → ${lp} บาท/${r.unit}\n🟢 ${wn} → ${wp} บาท/${r.unit}\n\nต่างกัน ${pct}% ต่อหน่วย\nแค่เปลี่ยนแพ็ก ประหยัดได้ ${sv} บาท!${lk}${tags}`,
+    `🔥 ${r.pn} — เปรียบเทียบแล้ว!\n\n💥 ${wn} ชนะขาด!\n✨ ราคา ${wp} บาท/${r.unit}\n🎯 ถูกกว่า ${pct}%\n💸 ประหยัด ${sv} บาท!${lk}${tags}`,
+  ];
+  swc(0);buildKit();
+}
+function swc(i){
+  aC=i;
+  document.getElementById('ctxt').textContent=caps[i]||'';
+  document.querySelectorAll('.ctab').forEach((t,j)=>t.classList.toggle('on',j===i));
+  buildKit();
+}
+
+function buildKit(){
+  if(!R)return;
+  const hook=selHook||'(เลือก Hook ด้านบน)';
+  const cap=caps[aC]||'';
+  const full=`${hook}\n\n${cap}`;
+  document.getElementById('fullkit').textContent=full;
+}
+
+function copyHook(){
+  if(!selHook){showT('⚠️ คลิกเลือก Hook ก่อนนะ');return;}
+  cpTxt(selHook,'🪝 Copy Hook แล้ว!');
+}
+function copyAll(){
+  const t=document.getElementById('fullkit').textContent;
+  if(!t||t==='—'){showT('⚠️ กรอกข้อมูลก่อนนะ');return;}
+  cpTxt(t,'📋 Copy ชุดโพสต์แล้ว!');
+  const btn=document.getElementById('copy-all-btn');
+  btn.classList.add('ok');btn.textContent='✅ Copy แล้ว!';
+  setTimeout(()=>{btn.classList.remove('ok');btn.innerHTML='📋 Copy ชุดโพสต์ทั้งหมด';},2000);
+}
+
+// ── TEMPLATES ───────────────────────────────────────────
+const TPLS=[
+  {bg:'#0B1D3A',acc:'#F5C800',tx:'#FFFFFF',sub:'rgba(255,255,255,0.38)',cBg:'rgba(255,255,255,0.06)',cBd:'rgba(255,255,255,0.11)',wBg:'#F5C800',wTx:'#0B1D3A',ln:'rgba(255,255,255,0.05)'},
+  {bg:'#F7F8FA',acc:'#1E4DB7',tx:'#0B1D3A',sub:'#8F97A8',cBg:'#FFFFFF',cBd:'#DDE1EA',wBg:'#1E4DB7',wTx:'#FFFFFF',ln:'rgba(11,29,58,0.04)'},
+  {bg:'#0D1117',acc:'#FFFFFF',tx:'#FFFFFF',sub:'rgba(255,255,255,0.32)',cBg:'rgba(255,255,255,0.04)',cBd:'rgba(255,255,255,0.08)',wBg:'#FFFFFF',wTx:'#0D1117',ln:'rgba(255,255,255,0.04)'},
+  {bg:'#1E4DB7',acc:'#F5C800',tx:'#FFFFFF',sub:'rgba(255,255,255,0.46)',cBg:'rgba(255,255,255,0.1)',cBd:'rgba(255,255,255,0.15)',wBg:'#F5C800',wTx:'#1E4DB7',ln:'rgba(255,255,255,0.07)'},
+  {bg:'#0f1b35',acc:'#4D9EFF',tx:'#FFFFFF',sub:'rgba(255,255,255,0.35)',cBg:'rgba(255,255,255,0.05)',cBd:'rgba(77,158,255,0.18)',wBg:'#4D9EFF',wTx:'#0f1b35',ln:'rgba(77,158,255,0.05)'},
+];
+function st(i,el){aT=i;document.querySelectorAll('.tth').forEach((t,j)=>t.classList.toggle('on',j===i));if(R)rReveal();}
+
+// ── CANVAS UTILS ────────────────────────────────────────
+function rr(ctx,x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+}
+
+// fit text: shrink font until fits maxW
+function ft(ctx,t,x,y,maxW,sz,wt,col){
+  if(!t)return;
+  let s=sz;
+  ctx.font=`${wt} ${s}px 'Chakra Petch'`;
+  while(ctx.measureText(t).width>maxW&&s>12){s--;ctx.font=`${wt} ${s}px 'Chakra Petch'`;}
+  ctx.fillStyle=col;ctx.fillText(t,x,y);
+}
+
+// Sarabun text
+function st2(ctx,t,x,y,sz,col,align){
+  ctx.font=`500 ${sz}px Sarabun`;ctx.fillStyle=col;ctx.textAlign=align||'center';ctx.fillText(t,x,y);
+}
+
+function grid(ctx,W,H,col){
+  ctx.strokeStyle=col;ctx.lineWidth=1;
+  for(let x=0;x<W;x+=60){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=60){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+}
+
+function drawImg(ctx,src,x,y,w,h,rad,cb){
+  if(!src){
+    rr(ctx,x,y,w,h,rad);ctx.fillStyle='rgba(128,128,128,0.12)';ctx.fill();
+    ctx.fillStyle='rgba(128,128,128,0.4)';ctx.font='52px serif';ctx.textAlign='center';
+    ctx.fillText('🖼️',x+w/2,y+h/2+18);return;
+  }
+  const img=new Image();
+  img.onload=()=>{ctx.save();rr(ctx,x,y,w,h,rad);ctx.clip();ctx.drawImage(img,x,y,w,h);ctx.restore();if(cb)cb();};
+  img.src=src;
+}
+
+// ── REVEAL CANVAS ───────────────────────────────────────
+function rReveal(){
+  if(!R)return;
+  const cv=document.getElementById('rc'),ctx=cv.getContext('2d');
+  const W=1080,H=1350;cv.width=W;cv.height=H;
+  const T=TPLS[aT],r=R,PAD=56;
+
+  ctx.fillStyle=T.bg;ctx.fillRect(0,0,W,H);
+  grid(ctx,W,H,T.ln);
+  ctx.fillStyle=T.acc;ctx.fillRect(0,0,W,6);ctx.fillRect(0,H-6,W,6);
+
+  // ── HEADER (h=180) ──
+  ctx.textAlign='center';
+  ctx.font="500 22px 'Chakra Petch'";ctx.fillStyle=T.sub;ctx.fillText('KO-TA-RA-KUMM',W/2,50);
+  ctx.strokeStyle=T.sub;ctx.globalAlpha=.13;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD,62);ctx.lineTo(W-PAD,62);ctx.stroke();ctx.globalAlpha=1;
+  ft(ctx,r.pn,W/2,120,W-PAD*2-20,50,'700',T.acc);
+  ft(ctx,'ซื้อแบบไหนคุ้มกว่ากัน?',W/2,168,W-PAD*2,28,'600',T.sub);
+
+  // ── CARDS (h=560, y=185) ──
+  const cY=185,cW=468,cH=555;
+  revCard(ctx,PAD,cY,cW,cH,r,'A',iA,T);
+  revCard(ctx,W-PAD-cW,cY,cW,cH,r,'B',iB,T);
+  // VS
+  ctx.fillStyle=T.acc;ctx.beginPath();ctx.arc(W/2,cY+cH/2,34,0,Math.PI*2);ctx.fill();
+  ctx.font="700 24px 'Chakra Petch'";ctx.fillStyle=T.wTx;ctx.textAlign='center';ctx.fillText('VS',W/2,cY+cH/2+9);
+
+  // ── WINNER (h=174, y=760) ──
+  const wY=cY+cH+20;
+  rr(ctx,PAD,wY,W-PAD*2,174,18);ctx.fillStyle=T.wBg;ctx.fill();
+  ctx.textAlign='center';ctx.fillStyle=T.wTx;
+  ctx.font="600 22px 'Chakra Petch'";ctx.fillText('✅  RECOMMENDED',W/2,wY+38);
+  const wN=r.win==='A'?r.a.n:r.b.n;
+  ft(ctx,`แบบ ${r.win}  —  ${wN}`,W/2,wY+100,W-PAD*2-40,46,'700',T.wTx);
+  const wPpu=r.win==='A'?r.a.ppu:r.b.ppu;
+  ctx.globalAlpha=.6;ctx.font="500 24px Sarabun";ctx.fillText(`${fp(wPpu)} บาท/${r.unit}`,W/2,wY+140);ctx.globalAlpha=1;
+
+  // ── STATS (h=126, y=954) ──
+  const sY=wY+194,sw=(W-PAD*2-16)/2;
+  statBox(ctx,PAD,sY,sw,126,r.pct.toFixed(1)+'%','คุ้มกว่า',T);
+  statBox(ctx,PAD+sw+16,sY,sw,126,fmt(r.save)+' บาท','ประหยัดได้',T);
+  ctx.textAlign='center';ctx.fillStyle=T.sub;ctx.font="22px Sarabun";
+  ctx.fillText(`A: ${fp(r.a.ppu)} บาท/${r.a.u}   ·   B: ${fp(r.b.ppu)} บาท/${r.b.u}`,W/2,sY+154);
+
+  // ── FOOTER (y=1210) ──
+  const fY=1212;
+  ctx.strokeStyle=T.sub;ctx.globalAlpha=.1;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD,fY);ctx.lineTo(W-PAD,fY);ctx.stroke();ctx.globalAlpha=1;
+  ctx.textAlign='center';ctx.fillStyle=T.sub;ctx.font="22px Sarabun";
+  ctx.fillText('#คุ้มค่า  #ประหยัดเงิน  #ShopSmart  #KoTaRaKumm',W/2,fY+36);
+  if(r.aff){ctx.fillStyle=T.acc;ctx.font="500 20px Sarabun";ctx.fillText('🔗 '+(r.aff.length>52?r.aff.slice(0,52)+'…':r.aff),W/2,fY+66);}
+  ctx.fillStyle=T.sub;ctx.font="500 18px 'Chakra Petch'";ctx.fillText('KO-TA-RA-KUMM.APP',W/2,fY+100);
+}
+
+function revCard(ctx,x,y,w,h,r,side,img,T){
+  const d=side==='A'?r.a:r.b,isW=r.win===side;
+  rr(ctx,x,y,w,h,14);ctx.fillStyle=T.cBg;ctx.fill();
+  ctx.strokeStyle=isW?T.acc:T.cBd;ctx.lineWidth=isW?3:1;ctx.stroke();
+  ctx.fillStyle=T.acc;ctx.font="700 46px 'Chakra Petch'";ctx.textAlign='center';ctx.fillText(side,x+w/2,y+50);
+  // image BIG
+  const iX=x+14,iY=y+60,iW=w-28,iH=230;
+  drawImg(ctx,img,iX,iY,iW,iH,10,rReveal);
+  let tY=iY+iH+30;
+  ft(ctx,d.n,x+w/2,tY,w-28,25,'700',T.tx);tY+=36;
+  ctx.fillStyle=T.sub;ctx.font="22px Sarabun";ctx.textAlign='center';
+  ctx.fillText(`${d.q} ${d.u}`,x+w/2,tY);tY+=32;
+  ctx.fillStyle=T.tx;ctx.font="500 24px Sarabun";ctx.fillText(`฿${d.p.toLocaleString()}`,x+w/2,tY);tY+=46;
+  ft(ctx,fp(d.ppu),x+w/2,tY,w-28,42,'700',T.acc);tY+=28;
+  ctx.fillStyle=T.sub;ctx.font="20px Sarabun";ctx.fillText('บาท/'+d.u,x+w/2,tY);
+  if(isW){ctx.fillStyle=T.acc;ctx.fillRect(x+14,y+h-7,w-28,5);}
+}
+
+function statBox(ctx,x,y,w,h,val,lbl,T){
+  rr(ctx,x,y,w,h,12);ctx.fillStyle=T.cBg;ctx.fill();
+  ctx.strokeStyle=T.cBd;ctx.lineWidth=1;ctx.stroke();
+  ctx.textAlign='center';
+  ft(ctx,val,x+w/2,y+h/2+14,w-22,38,'700',T.acc);
+  ctx.fillStyle=T.sub;ctx.font="22px Sarabun";ctx.fillText(lbl,x+w/2,y+h/2+44);
+}
+
+// ── TEASER CANVASES ─────────────────────────────────────
+function rTease(){
+  if(!R)return;
+  teaserV('tc1',false);
+  teaserV('tc2',true);
+}
+
+function teaserV(id,dark){
+  const cv=document.getElementById(id),ctx=cv.getContext('2d');
+  const W=1080,H=1350;cv.width=W;cv.height=H;
+  const r=R,PAD=56;
+  const BG=dark?'#0B1D3A':'#FFFFFF',ACC=dark?'#F5C800':'#1E4DB7';
+  const TX=dark?'#FFFFFF':'#0B1D3A',SUB=dark?'rgba(255,255,255,0.36)':'#8F97A8';
+  const CBG=dark?'rgba(255,255,255,0.06)':'#F7F8FA',CBD=dark?'rgba(255,255,255,0.11)':'#DDE1EA';
+  const LN=dark?'rgba(255,255,255,0.04)':'rgba(11,29,58,0.04)';
+
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+  grid(ctx,W,H,LN);
+  ctx.fillStyle=ACC;ctx.fillRect(0,0,W,6);ctx.fillRect(0,H-6,W,6);
+
+  // ── HEADER (h=240) ──
+  ctx.textAlign='center';
+  ctx.font="500 22px 'Chakra Petch'";ctx.fillStyle=SUB;ctx.fillText('KO-TA-RA-KUMM',W/2,50);
+  ctx.strokeStyle=SUB;ctx.globalAlpha=.12;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD,62);ctx.lineTo(W-PAD,62);ctx.stroke();ctx.globalAlpha=1;
+  ctx.textAlign='center';ctx.fillStyle=TX;
+  ft(ctx,'แบบไหนคุ้มกว่ากัน?',W/2,128,W-PAD*2,58,'700',TX);
+  ft(ctx,r.pn,W/2,186,W-PAD*2,40,'700',ACC);
+  ctx.fillStyle=SUB;ctx.font="500 26px Sarabun";ctx.fillText('ลองคิดดูก่อนนะ 🤔',W/2,228);
+
+  ctx.strokeStyle=dark?'rgba(255,255,255,0.1)':'#DDE1EA';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD,244);ctx.lineTo(W-PAD,244);ctx.stroke();
+
+  // ── CARDS (h=570, y=254) ──
+  const cY=254,cW=468,cH=570;
+  tCard(ctx,PAD,cY,cW,cH,r,'A',iA,BG,ACC,TX,SUB,CBG,CBD,dark);
+  tCard(ctx,W-PAD-cW,cY,cW,cH,r,'B',iB,BG,ACC,TX,SUB,CBG,CBD,dark);
+  ctx.fillStyle=ACC;ctx.beginPath();ctx.arc(W/2,cY+cH/2,34,0,Math.PI*2);ctx.fill();
+  ctx.font="700 24px 'Chakra Petch'";ctx.fillStyle=BG;ctx.textAlign='center';ctx.fillText('VS',W/2,cY+cH/2+9);
+
+  // ── CTA BANNER (h=168, y=844) ──
+  const ctaY=cY+cH+20;
+  rr(ctx,PAD,ctaY,W-PAD*2,168,18);ctx.fillStyle=ACC;ctx.fill();
+  ctx.textAlign='center';ctx.fillStyle=BG;
+  ft(ctx,'ทายซิ แบบไหนคุ้มกว่า?',W/2,ctaY+56,W-PAD*2-40,40,'700',BG);
+  ctx.font="600 26px Sarabun";ctx.globalAlpha=.8;
+  ctx.fillText('💬 คอมเมนต์คำตอบด้านล่างเลย!',W/2,ctaY+104);ctx.globalAlpha=1;
+  ctx.font="500 22px Sarabun";ctx.globalAlpha=.6;
+  ctx.fillText('เฉลยในภาพถัดไป ↓',W/2,ctaY+142);ctx.globalAlpha=1;
+
+  // ── FOOTER (y=1212) ──
+  const fY=1212;
+  ctx.strokeStyle=SUB;ctx.globalAlpha=.1;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD,fY);ctx.lineTo(W-PAD,fY);ctx.stroke();ctx.globalAlpha=1;
+  ctx.textAlign='center';ctx.fillStyle=SUB;ctx.font="22px Sarabun";
+  ctx.fillText('#ทายได้ไหม  #ช้อปให้คุ้ม  #คุ้มค่า  #KoTaRaKumm',W/2,fY+36);
+  ctx.font="500 18px 'Chakra Petch'";ctx.fillText('KO-TA-RA-KUMM.APP',W/2,fY+72);
+}
+
+function tCard(ctx,x,y,w,h,r,side,imgData,BG,ACC,TX,SUB,CBG,CBD,dark){
+  const d=side==='A'?r.a:r.b;
+  rr(ctx,x,y,w,h,14);ctx.fillStyle=CBG;ctx.fill();
+  ctx.strokeStyle=CBD;ctx.lineWidth=1.5;ctx.stroke();
+  ctx.fillStyle=ACC;ctx.font="700 46px 'Chakra Petch'";ctx.textAlign='center';ctx.fillText(side,x+w/2,y+50);
+  // image BIG
+  const iX=x+14,iY=y+60,iW=w-28,iH=250;
+  const cb=dark?()=>teaserV('tc2',true):()=>teaserV('tc1',false);
+  drawImg(ctx,imgData,iX,iY,iW,iH,10,cb);
+  let tY=iY+iH+32;
+  ft(ctx,d.n,x+w/2,tY,w-28,24,'700',TX);tY+=38;
+  ctx.fillStyle=SUB;ctx.font="500 22px Sarabun";ctx.textAlign='center';
+  ctx.fillText(`ปริมาณ: ${d.q} ${d.u}`,x+w/2,tY);tY+=36;
+  ctx.fillStyle=TX;ctx.font="500 26px Sarabun";
+  ctx.fillText(`ราคา ฿${d.p.toLocaleString()}`,x+w/2,tY);tY+=46;
+  // hidden ppu — just dashes, clean
+  ctx.fillStyle=ACC;ctx.font="700 38px 'Chakra Petch'";
+  ctx.fillText('— — —',x+w/2,tY);tY+=26;
+  ctx.fillStyle=SUB;ctx.font="20px Sarabun";ctx.fillText('บาท/'+d.u,x+w/2,tY);
+}
+
+// ── EXPORT ──────────────────────────────────────────────
+function expCv(id,lbl){
+  if(!R){showT('⚠️ กรอกข้อมูลก่อนนะ');return;}
+  const cv=document.getElementById(id);
+  const a=document.createElement('a');
+  a.download=`kotarakumm-${lbl}-${(R.pn||'img').replace(/\s+/g,'-')}.jpg`;
+  a.href=cv.toDataURL('image/jpeg',.93);a.click();
+  showT('✅ บันทึกภาพแล้ว!');
+}
+
+// ── COPY ────────────────────────────────────────────────
+function cpTxt(t,msg){
+  const m=msg||'📋 คัดลอกแล้ว!';
+  if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>showT(m));
+  else{const e=document.createElement('textarea');e.value=t;document.body.appendChild(e);e.select();document.execCommand('copy');document.body.removeChild(e);showT(m);}
+}
+
+// ── TOAST ────────────────────────────────────────────────
+let _tt;
+function showT(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>e.classList.remove('show'),2200);}
+</script>
+</body>
+</html>

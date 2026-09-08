@@ -177,14 +177,15 @@
 
   /* ---------------- ปุ่มลัด ซื้อเข้า/นับสต๊อก ในตารางวัตถุดิบ ---------------- */
   .btn-quick {
-    display: block; width: 100%; border: none; border-radius: 6px;
-    padding: 6px 9px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center;
-    white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 5px;
+    padding: 4px 8px; font-size: 11px; font-weight: 700; cursor: pointer;
+    white-space: nowrap; line-height: 1.4;
   }
-  .btn-quick-purchase { background: var(--moss); color: var(--white); }
-  .btn-quick-purchase:active { background: #3B4830; }
-  .btn-quick-count { background: var(--brass); color: var(--white); }
-  .btn-quick-count:active { background: #8C6A2E; }
+  .btn-quick-purchase { background: var(--moss-bg); color: var(--moss); }
+  .btn-quick-purchase:active { background: var(--moss); color: var(--white); }
+  .btn-quick-count { background: var(--ember-bg); color: var(--brass); }
+  .btn-quick-count:active { background: var(--brass); color: var(--white); }
 
   /* ---------------- ป๊อปอัพกรอกข้อมูลด่วน (ซื้อเข้า / นับสต๊อก) ---------------- */
   .quick-modal-overlay {
@@ -3531,11 +3532,11 @@ async function renderIngredients(detailId) {
 
           const mainRow = `
         <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
-          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;">
-            <div style="display:flex;align-items:center;white-space:nowrap;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div>
-            <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;min-width:82px;">
-              <button type="button" class="btn-quick btn-quick-purchase" data-quick-purchase="${ing.id}">+ ซื้อเข้า</button>
-              <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับสต๊อก</button>
+          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              ${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}
+              <button type="button" class="btn-quick btn-quick-purchase" data-quick-purchase="${ing.id}">ซื้อ</button>
+              <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับ</button>
             </div>
           </td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>

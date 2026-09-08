@@ -235,6 +235,43 @@
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
   }
+
+  /* ---------------- Ledger table: sticky header + sticky first column ---------------- */
+  .ledger-table-wrap {
+    overflow: auto;
+    max-height: 62vh;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .ledger-table-wrap table { border-collapse: separate; border-spacing: 0; }
+  .ledger-table-wrap thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--paper-deep);
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .ledger-table-wrap tbody td:first-child,
+  .ledger-table-wrap thead th:first-child {
+    position: sticky; left: 0; z-index: 1;
+    background: var(--white);
+    box-shadow: 1px 0 0 var(--line);
+  }
+  .ledger-table-wrap thead th:first-child { z-index: 3; background: var(--paper-deep); }
+  .ledger-table-wrap tr[data-ingredient-row] td:first-child { background: var(--paper); }
+  .ledger-table-wrap tr.row-selected td:first-child,
+  .ledger-table-wrap tr.row-selected td { background: var(--paper-deep); }
+  .ledger-cat-header td {
+    position: relative;
+    padding: 6px 8px !important;
+  }
+  .ledger-cat-header td:first-child { position: static; }
+  .ledger-cat-pill {
+    display: inline-block; font-size: 11px; font-weight: 700;
+    padding: 2px 9px; border-radius: 999px;
+  }
+  /* Secondary (detail) columns — hidden by default on narrow screens, togglable */
+  @media (max-width: 640px) {
+    .ledger-table-wrap:not(.show-secondary) .col-secondary { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -3407,6 +3444,7 @@ let ingredientsDetailId = null;
 let ingredientsActiveCategory = 'ทั้งหมด';
 let ingredientsLedgerDate = todayStr();
 let ingredientsSummaryTab = 'daily'; // 'daily' = สรุปวัตถุดิบรายวัน | 'trend' = แนวโน้มการใช้วัตถุดิบ
+let ingredientsShowSecondaryCols = false; // แสดงคอลัมน์รายละเอียด (ต้นทุน/ยอดยกมา/ซื้อเข้า/มูลค่า) บนจอแคบ
 let ingredientsHistoryOpen = false; // แผงประวัติซื้อ พับ/กาง
 let quickModal = null; // { type: 'purchase' | 'count', ingredientId } — ป๊อปอัพกรอกข้อมูลด่วนจากตาราง
 
@@ -3438,28 +3476,37 @@ async function renderIngredients(detailId) {
   const todayClosed = todayEntry?.is_closed === true;
   const ledgerRows = await getDailyIngredientLedger(ingredientsLedgerDate);
 
-  // ---------- รายการ "ต้องดำเนินการวันนี้" — รวมใกล้หมด + เกินกำหนดนับ ไว้จุดเดียวบนสุด ไม่ต้องเลื่อนหาทั้งตาราง ----------
-  const actionNeededIngredients = allIngredients.filter((ing) => lowStock.has(ing.id) || overdueMap[ing.id]);
-  const actionNeededHtml = actionNeededIngredients.length
-    ? actionNeededIngredients
-        .map((ing) => {
-          const reasons = [];
-          if (lowStock.has(ing.id)) reasons.push('ใกล้หมด');
-          if (overdueMap[ing.id]) reasons.push(overdueMap[ing.id]);
-          return `
-      <div class="row-item" style="flex-wrap:wrap;gap:8px;">
-        <span class="label" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          ${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}
-          <span style="font-size:11px;color:var(--ember-deep);">${escapeHtml(reasons.join(' · '))}</span>
-        </span>
-        <span style="display:flex;gap:6px;flex-shrink:0;">
-          <button type="button" class="btn-quick btn-quick-purchase" data-quick-purchase="${ing.id}">ซื้อ</button>
-          <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับ</button>
-        </span>
-      </div>`;
+  // ---------- สถานะ "ต้องดำเนินการวันนี้" — สรุปเป็นชิปตามหมวดหมู่ (แตะแล้วกระโดดไปตารางของหมวดนั้น) ----------
+  // จำนวนรายการ + จำนวนที่ "ต้องดำเนินการ" (ใกล้หมด/เกินกำหนดนับ) ต่อหมวดหมู่ — ใช้ทั้งกับชิปสรุปด้านบน และ badge บนแท็บหมวดหมู่
+  const categoryCounts = {};
+  const categoryFlaggedCounts = {};
+  const categoryLowStockCounts = {};
+  const categoryOverdueCounts = {};
+  for (const ing of allIngredients) {
+    const key = ing.category || 'ไม่ระบุหมวดหมู่';
+    categoryCounts[key] = (categoryCounts[key] || 0) + 1;
+    if (lowStock.has(ing.id)) categoryLowStockCounts[key] = (categoryLowStockCounts[key] || 0) + 1;
+    if (overdueMap[ing.id]) categoryOverdueCounts[key] = (categoryOverdueCounts[key] || 0) + 1;
+    if (lowStock.has(ing.id) || overdueMap[ing.id]) {
+      categoryFlaggedCounts[key] = (categoryFlaggedCounts[key] || 0) + 1;
+    }
+  }
+  const totalFlaggedCount = Object.values(categoryFlaggedCounts).reduce((a, b) => a + b, 0);
+
+  const flaggedCategoryKeys = Object.keys(categoryFlaggedCounts).sort((a, b) => a.localeCompare(b, 'th'));
+  const actionChipsHtml = flaggedCategoryKeys.length
+    ? flaggedCategoryKeys
+        .map((key) => {
+          const color = key === 'ไม่ระบุหมวดหมู่' ? { bg: 'var(--paper-deep)', text: 'var(--ink-soft)' } : getCategoryColor(key);
+          const lowN = categoryLowStockCounts[key] || 0;
+          const odN = categoryOverdueCounts[key] || 0;
+          const parts = [];
+          if (lowN) parts.push(`🔴 ${lowN}`);
+          if (odN) parts.push(`🟡 ${odN}`);
+          return `<button type="button" class="btn btn-small" data-select-ing-category="${escapeHtml(key)}" data-action-chip="1" style="background:${color.bg};color:${color.text};border:1.5px solid ${color.text};white-space:nowrap;">${escapeHtml(key)} <span style="font-weight:700;">${parts.join(' · ')}</span></button>`;
         })
         .join('')
-    : `<div class="empty-state"><p>วันนี้ไม่มีรายการต้องจัดการ ของครบ นับครบแล้ว</p></div>`;
+    : `<span class="stamp ok">วันนี้ไม่มีรายการต้องจัดการ ของครบ นับครบแล้ว</span>`;
 
   // ---------- แผงรายละเอียด (คำนวณก่อน เพื่อแทรกเป็นแถวขยายใต้แถวที่เลือกในตารางเดียวกัน) ----------
   const selectedIng = ingredientsDetailId ? allIngredients.find((i) => i.id === ingredientsDetailId) : null;
@@ -3545,19 +3592,7 @@ async function renderIngredients(detailId) {
   }
 
   // (หมายเหตุ: ตารางรายการวัตถุดิบถูกรวมเข้ากับ "สรุปรายวัน" ด้านล่างแล้ว ไม่ต้องสร้างตารางแยกอีกชุด)
-
-  // จำนวนรายการ + จำนวนที่ "ต้องดำเนินการ" (ใกล้หมด/เกินกำหนดนับ) ต่อหมวดหมู่ — โชว์เป็น badge บนแท็บหมวดหมู่
-  // เพื่อให้เห็นตั้งแต่ยังไม่ได้กดเข้าไปดูว่าหมวดไหนมีอะไรต้องจัดการบ้าง ไม่ต้องเปิดทุกแท็บไล่เช็คเอง
-  const categoryCounts = {};
-  const categoryFlaggedCounts = {};
-  for (const ing of allIngredients) {
-    const key = ing.category || 'ไม่ระบุหมวดหมู่';
-    categoryCounts[key] = (categoryCounts[key] || 0) + 1;
-    if (lowStock.has(ing.id) || overdueMap[ing.id]) {
-      categoryFlaggedCounts[key] = (categoryFlaggedCounts[key] || 0) + 1;
-    }
-  }
-  const totalFlaggedCount = Object.values(categoryFlaggedCounts).reduce((a, b) => a + b, 0);
+  // (categoryCounts / categoryFlaggedCounts / totalFlaggedCount คำนวณไว้แล้วด้านบน ใช้ร่วมกับชิปสรุป "ต้องดำเนินการวันนี้")
 
   const categoryTabsHtml = `
     <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;">
@@ -3606,7 +3641,7 @@ async function renderIngredients(detailId) {
     const selected = ingredientsDetailId === ing.id;
 
     const mainRow = `
-        <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
+        <tr data-ingredient-row="${ing.id}" class="${selected ? 'row-selected' : ''}" style="cursor:pointer;">
           <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap;">
             <div style="display:flex;align-items:center;gap:6px;">
               ${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}
@@ -3614,12 +3649,12 @@ async function renderIngredients(detailId) {
               <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับ</button>
             </div>
           </td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}${openingHint}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(ing.unit)}</td>
+          <td class="col-secondary" style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
+          <td class="col-secondary" style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}${openingHint}</td>
+          <td class="col-secondary" style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(ing.unit)}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${closingDisplay}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${usedDisplay}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${valueDisplay}</td>
+          <td class="col-secondary" style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${valueDisplay}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">${stamps.join('')}</div></td>
         </tr>`;
 
@@ -3643,7 +3678,7 @@ async function renderIngredients(detailId) {
     ledgerRowsHtml = orderedKeys
       .map((key) => {
         const color = key === 'ไม่ระบุหมวดหมู่' ? { bg: 'var(--paper-deep)', text: 'var(--ink-soft)' } : getCategoryColor(key);
-        const headerRow = `<tr><td colspan="8" style="padding:10px 8px 6px;background:${color.bg};font-weight:700;font-size:12px;color:${color.text};">${escapeHtml(key)} (${groups[key].length})</td></tr>`;
+        const headerRow = `<tr class="ledger-cat-header"><td colspan="8" style="border-bottom:1px solid var(--line);"><span class="ledger-cat-pill" style="background:${color.bg};color:${color.text};">${escapeHtml(key)} (${groups[key].length})</span></td></tr>`;
         return headerRow + groups[key].map(buildIngredientRowHtml).join('');
       })
       .join('');
@@ -3755,8 +3790,9 @@ async function renderIngredients(detailId) {
     </div>
 
     <div class="card">
-      <h2>ต้องดำเนินการวันนี้${actionNeededIngredients.length ? ` (${actionNeededIngredients.length})` : ''}</h2>
-      <div class="row-list">${actionNeededHtml}</div>
+      <h2>ต้องดำเนินการวันนี้${totalFlaggedCount ? ` (${totalFlaggedCount})` : ''}</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">${actionChipsHtml}</div>
+      ${flaggedCategoryKeys.length ? `<p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">🔴 ใกล้หมด · 🟡 ยังไม่ได้นับ — แตะหมวดหมู่เพื่อดูรายการในตารางด้านล่าง</p>` : ''}
     </div>
 
     <div class="alert-row">
@@ -3785,17 +3821,22 @@ async function renderIngredients(detailId) {
           <input type="date" id="ledger-date" value="${ingredientsLedgerDate}" max="${today}" />
         </div>
         ${categoryTabsHtml}
-        <div style="overflow-x:auto;">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:6px;">
+          <button type="button" class="btn-ghost" id="btn-toggle-secondary-cols" style="font-size:12px;">
+            ${ingredientsShowSecondaryCols ? 'ซ่อนคอลัมน์รายละเอียด ▲' : 'แสดงคอลัมน์รายละเอียด (ต้นทุน/ยอดยกมา/ซื้อเข้า/มูลค่า) ▾'}
+          </button>
+        </div>
+        <div class="ledger-table-wrap${ingredientsShowSecondaryCols ? ' show-secondary' : ''}" id="ledger-table-section">
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead>
               <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
                 <th style="padding:8px;">วัตถุดิบ</th>
-                <th style="padding:8px;text-align:right;">ต้นทุน/หน่วย</th>
-                <th style="padding:8px;text-align:right;">ยอดยกมา</th>
-                <th style="padding:8px;text-align:right;">ซื้อเข้า</th>
+                <th class="col-secondary" style="padding:8px;text-align:right;">ต้นทุน/หน่วย</th>
+                <th class="col-secondary" style="padding:8px;text-align:right;">ยอดยกมา</th>
+                <th class="col-secondary" style="padding:8px;text-align:right;">ซื้อเข้า</th>
                 <th style="padding:8px;text-align:right;">นับได้ปิดร้าน</th>
                 <th style="padding:8px;text-align:right;">ใช้ไปจริง</th>
-                <th style="padding:8px;text-align:right;">มูลค่าที่ใช้ไป</th>
+                <th class="col-secondary" style="padding:8px;text-align:right;">มูลค่าที่ใช้ไป</th>
                 <th style="padding:8px;">สถานะ</th>
               </tr>
             </thead>
@@ -3880,6 +3921,11 @@ async function renderIngredients(detailId) {
     });
   });
 
+  document.getElementById('btn-toggle-secondary-cols')?.addEventListener('click', () => {
+    ingredientsShowSecondaryCols = !ingredientsShowSecondaryCols;
+    renderIngredients(ingredientsDetailId);
+  });
+
   document.getElementById('btn-view-usage')?.addEventListener('click', async () => {
     const ingredientId = document.getElementById('usage-ingredient').value;
     const from = document.getElementById('usage-from').value;
@@ -3929,9 +3975,13 @@ async function renderIngredients(detailId) {
   });
 
   document.querySelectorAll('[data-select-ing-category]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       ingredientsActiveCategory = btn.dataset.selectIngCategory;
-      renderIngredients(ingredientsDetailId);
+      const isActionChip = btn.dataset.actionChip === '1';
+      await renderIngredients(ingredientsDetailId);
+      if (isActionChip) {
+        document.getElementById('ledger-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     });
   });
 

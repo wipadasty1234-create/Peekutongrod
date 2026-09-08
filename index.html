@@ -3305,9 +3305,7 @@ let ingredientsDetailId = null;
 let ingredientsActiveCategory = 'ทั้งหมด';
 let ingredientsLedgerDate = todayStr();
 let ingredientsSummaryTab = 'daily'; // 'daily' = สรุปวัตถุดิบรายวัน | 'trend' = แนวโน้มการใช้วัตถุดิบ
-let ingredientsActionTab = 'purchase'; // 'purchase' = บันทึกซื้อเข้า | 'count' = นับสต็อกปิดร้าน
-let ingredientsHistoryTab = 'purchases'; // 'purchases' = ประวัติซื้อ | 'counts' = ประวัตินับสต็อก
-let ingredientsHistoryOpen = false; // แผงประวัติ พับ/กาง
+let ingredientsHistoryOpen = false; // แผงประวัติซื้อ พับ/กาง
 let quickModal = null; // { type: 'purchase' | 'count', ingredientId } — ป๊อปอัพกรอกข้อมูลด่วนจากตาราง
 
 async function renderIngredients(detailId) {
@@ -3362,26 +3360,6 @@ async function renderIngredients(detailId) {
           .join('')
       : `<tr><td colspan="4" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีประวัติซื้อ</td></tr>`;
 
-    const counts = await db.ingredient_stock_counts.where('ingredient_id').equals(selectedIng.id).sortBy('count_date');
-    const countsDesc = counts.slice().reverse();
-    const countsRowsHtml = countsDesc.length
-      ? countsDesc
-          .map(
-            (c) => `
-          <tr data-count-id="${c.id}">
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${c.count_date}</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${c.opening_stock} + ${c.purchased_qty}</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);"><input type="number" step="any" class="edit-count-closing" value="${c.closing_count}" style="width:64px;text-align:right;font-size:12px;padding:4px;" /></td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${c.used_qty} (${formatMoney(c.used_value)})</td>
-            <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">
-              <button class="btn-ghost" data-save-count="${c.id}" style="padding:3px 6px;font-size:11px;">บันทึก</button>
-              <button class="btn-danger-text" data-remove-count="${c.id}" style="font-size:11px;">ลบ</button>
-            </td>
-          </tr>`
-          )
-          .join('')
-      : `<tr><td colspan="5" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีประวัติการนับ</td></tr>`;
-
     detailPanelHtml = `
     <div data-ingredient-detail="${selectedIng.id}" style="padding:16px 14px 18px;">
       <div class="row-item" style="border-bottom:none;padding-top:0;">
@@ -3404,83 +3382,22 @@ async function renderIngredients(detailId) {
         </div>
       </div>
 
-      <h3 style="margin-top:14px;">บันทึกรายการ</h3>
-      <div class="seg-tabs">
-        <button class="seg-tab ${ingredientsActionTab === 'purchase' ? 'active' : ''}" data-action-tab="purchase">+ ซื้อเข้า</button>
-        <button class="seg-tab ${ingredientsActionTab === 'count' ? 'active' : ''}" data-action-tab="count">นับสต็อกปิดร้าน</button>
-      </div>
-
-      <div id="action-panel-purchase" style="${ingredientsActionTab === 'purchase' ? '' : 'display:none;'}">
-        <div class="field-grid">
-          <div class="field">
-            <label for="detail-purchase-qty">จำนวน (${escapeHtml(selectedIng.unit)})</label>
-            <input type="number" min="0" step="any" id="detail-purchase-qty" />
-          </div>
-          <div class="field">
-            <label for="detail-purchase-cost">ราคา/หน่วย (บาท)</label>
-            <input type="number" min="0" step="any" id="detail-purchase-cost" />
-          </div>
-        </div>
-        <input type="date" id="detail-purchase-date" value="${today}" style="margin-bottom:10px;" />
-        <button class="btn btn-ghost btn-small" id="btn-detail-save-purchase">บันทึกซื้อเข้า</button>
-      </div>
-
-      <div id="action-panel-count" style="${ingredientsActionTab === 'count' ? '' : 'display:none;'}">
-        <div class="field-grid">
-          <div class="field">
-            <label for="detail-count-closing">จำนวนที่นับได้ (${escapeHtml(selectedIng.unit)})</label>
-            <input type="number" min="0" step="any" id="detail-count-closing" />
-          </div>
-          <div class="field">
-            <label for="detail-count-date">วันที่นับ</label>
-            <input type="date" id="detail-count-date" value="${today}" />
-          </div>
-        </div>
-        <button class="btn btn-primary btn-small" id="btn-detail-save-count">บันทึกนับสต็อก</button>
-        <div id="detail-count-result" style="margin-top:8px;font-size:13px;color:var(--ink-soft);"></div>
-      </div>
-
-      <button class="btn-edit-text" style="margin-top:16px;" id="btn-toggle-ing-history">${ingredientsHistoryOpen ? 'ซ่อนประวัติ ▲' : 'ดูประวัติซื้อ/นับสต็อก ▾'}</button>
+      <button class="btn-edit-text" style="margin-top:16px;" id="btn-toggle-ing-history">${ingredientsHistoryOpen ? 'ซ่อนประวัติซื้อ ▲' : 'ดูประวัติซื้อ ▾'}</button>
 
       <div id="ing-history-panel" style="${ingredientsHistoryOpen ? '' : 'display:none;'}margin-top:10px;">
-        <div class="seg-tabs">
-          <button class="seg-tab ${ingredientsHistoryTab === 'purchases' ? 'active' : ''}" data-history-tab="purchases">ประวัติซื้อ</button>
-          <button class="seg-tab ${ingredientsHistoryTab === 'counts' ? 'active' : ''}" data-history-tab="counts">ประวัตินับสต็อก</button>
-        </div>
-
-        <div id="history-panel-purchases" style="${ingredientsHistoryTab === 'purchases' ? '' : 'display:none;'}">
-          <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px;">แก้ไข/ลบได้ — ระบบจะคำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ให้อัตโนมัติ</p>
-          <div style="overflow-x:auto;overflow-y:auto;max-height:280px;border:1px solid var(--line);border-radius:var(--radius);">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
-                  <th style="padding:6px;position:sticky;top:0;background:var(--paper-deep);">วันที่</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">จำนวน</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">ราคา/หน่วย</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);"></th>
-                </tr>
-              </thead>
-              <tbody>${lotsRowsHtml}</tbody>
-            </table>
-          </div>
-        </div>
-
-        <div id="history-panel-counts" style="${ingredientsHistoryTab === 'counts' ? '' : 'display:none;'}">
-          <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px;">แก้ไข/ลบได้เช่นกัน — รวมถึงแทรกนับย้อนหลังได้ ระบบจะไล่คำนวณวันหลังจากนั้นใหม่ให้</p>
-          <div style="overflow-x:auto;overflow-y:auto;max-height:280px;border:1px solid var(--line);border-radius:var(--radius);">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
-                  <th style="padding:6px;position:sticky;top:0;background:var(--paper-deep);">วันที่นับ</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">ต้นงวด+รับเข้า</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">นับได้</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">ใช้ไป</th>
-                  <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);"></th>
-                </tr>
-              </thead>
-              <tbody>${countsRowsHtml}</tbody>
-            </table>
-          </div>
+        <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px;">แก้ไข/ลบได้ — ระบบจะคำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ให้อัตโนมัติ</p>
+        <div style="overflow-x:auto;overflow-y:auto;max-height:280px;border:1px solid var(--line);border-radius:var(--radius);">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+                <th style="padding:6px;position:sticky;top:0;background:var(--paper-deep);">วันที่</th>
+                <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">จำนวน</th>
+                <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);">ราคา/หน่วย</th>
+                <th style="padding:6px;text-align:right;position:sticky;top:0;background:var(--paper-deep);"></th>
+              </tr>
+            </thead>
+            <tbody>${lotsRowsHtml}</tbody>
+          </table>
         </div>
       </div>
 
@@ -3821,17 +3738,8 @@ async function renderIngredients(detailId) {
 
   const closeDetailBtn = document.querySelector('[data-close-detail]');
   if (closeDetailBtn) closeDetailBtn.addEventListener('click', () => {
-    ingredientsActionTab = 'purchase';
-    ingredientsHistoryTab = 'purchases';
     ingredientsHistoryOpen = false;
     renderIngredients(null);
-  });
-
-  document.querySelectorAll('[data-action-tab]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      ingredientsActionTab = btn.dataset.actionTab;
-      renderIngredients(ingredientsDetailId);
-    });
   });
 
   const toggleHistoryBtn = document.getElementById('btn-toggle-ing-history');
@@ -3841,13 +3749,6 @@ async function renderIngredients(detailId) {
       renderIngredients(ingredientsDetailId);
     });
   }
-
-  document.querySelectorAll('[data-history-tab]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      ingredientsHistoryTab = btn.dataset.historyTab;
-      renderIngredients(ingredientsDetailId);
-    });
-  });
 
   const saveCategoryBtn = document.getElementById('btn-save-category');
   if (saveCategoryBtn) {
@@ -3865,40 +3766,6 @@ async function renderIngredients(detailId) {
       const result = await removeIngredient(removeBtn.dataset.removeIngredient);
       showToast(result.deleted ? 'ลบวัตถุดิบสำเร็จ' : 'ซ่อนวัตถุดิบแล้ว (มีประวัติซื้อ/นับอยู่ ลบจริงไม่ได้)');
       renderIngredients(null);
-    });
-  }
-
-  const savePurchaseBtn = document.getElementById('btn-detail-save-purchase');
-  if (savePurchaseBtn) {
-    savePurchaseBtn.addEventListener('click', async () => {
-      const qty = Number(document.getElementById('detail-purchase-qty').value) || 0;
-      const cost = Number(document.getElementById('detail-purchase-cost').value) || 0;
-      const date = document.getElementById('detail-purchase-date').value;
-      if (qty <= 0) { showToast('กรุณาใส่จำนวนที่ซื้อ'); return; }
-      try {
-        await recordPurchase({ ingredient_id: ingredientsDetailId, purchase_date: date, quantity: qty, unit_cost: cost });
-        showToast('บันทึกซื้อเข้าสำเร็จ');
-        renderIngredients(ingredientsDetailId);
-      } catch (err) {
-        showToast('เกิดข้อผิดพลาด: ' + err.message);
-      }
-    });
-  }
-
-  const saveCountBtn = document.getElementById('btn-detail-save-count');
-  if (saveCountBtn) {
-    saveCountBtn.addEventListener('click', async () => {
-      const closing = Number(document.getElementById('detail-count-closing').value) || 0;
-      const date = document.getElementById('detail-count-date').value;
-      try {
-        const result = await recordStockCount({ ingredient_id: ingredientsDetailId, count_date: date, closing_count: closing });
-        document.getElementById('detail-count-result').textContent =
-          `ใช้ไป ${result.used_qty} หน่วย มูลค่า ${formatMoney(result.used_value)}`;
-        showToast('บันทึกนับสต็อกสำเร็จ');
-        renderIngredients(ingredientsDetailId);
-      } catch (err) {
-        showToast('เกิดข้อผิดพลาด: ' + err.message);
-      }
     });
   }
 
@@ -3925,34 +3792,6 @@ async function renderIngredients(detailId) {
       try {
         await removePurchase(btn.dataset.removePurchase);
         showToast('ลบรายการซื้อแล้ว');
-        renderIngredients(ingredientsDetailId);
-      } catch (err) {
-        showToast('เกิดข้อผิดพลาด: ' + err.message);
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-save-count]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const row = btn.closest('tr');
-      const closing_count = Number(row.querySelector('.edit-count-closing').value);
-      if (Number.isNaN(closing_count)) { showToast('จำนวนที่นับไม่ถูกต้อง'); return; }
-      try {
-        await updateStockCount(btn.dataset.saveCount, { closing_count });
-        showToast('แก้ไขการนับสต็อกแล้ว — คำนวณ COGS วันหลังจากนี้ใหม่ให้แล้ว');
-        renderIngredients(ingredientsDetailId);
-      } catch (err) {
-        showToast('เกิดข้อผิดพลาด: ' + err.message);
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-remove-count]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('ลบรายการนับสต็อกนี้? ระบบจะคำนวณ COGS ของทุกวันหลังจากนี้ใหม่')) return;
-      try {
-        await removeStockCount(btn.dataset.removeCount);
-        showToast('ลบรายการนับสต็อกแล้ว');
         renderIngredients(ingredientsDetailId);
       } catch (err) {
         showToast('เกิดข้อผิดพลาด: ' + err.message);

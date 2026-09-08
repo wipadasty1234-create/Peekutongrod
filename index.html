@@ -175,6 +175,39 @@
   }
   .toast.show { opacity: 1; }
 
+  /* ---------------- ปุ่มลัด ซื้อเข้า/นับสต๊อก ในตารางวัตถุดิบ ---------------- */
+  .btn-quick {
+    display: block; width: 100%; border: none; border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center;
+    white-space: nowrap;
+  }
+  .btn-quick-purchase { background: var(--moss); color: var(--white); }
+  .btn-quick-purchase:active { background: #3B4830; }
+  .btn-quick-count { background: var(--brass); color: var(--white); }
+  .btn-quick-count:active { background: #8C6A2E; }
+
+  /* ---------------- ป๊อปอัพกรอกข้อมูลด่วน (ซื้อเข้า / นับสต๊อก) ---------------- */
+  .quick-modal-overlay {
+    position: fixed; inset: 0; z-index: 70;
+    background: rgba(36,28,20,0.55);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .quick-modal-sheet {
+    background: var(--white); border-radius: var(--radius);
+    width: 100%; max-width: 400px; max-height: 82vh; overflow-y: auto;
+    padding: 20px; box-shadow: 0 12px 32px rgba(36,28,20,0.35);
+  }
+  .quick-modal-header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px;
+  }
+  .quick-modal-header .quick-modal-title {
+    font-family: var(--font-display); font-weight: 700; font-size: 17px; color: var(--ink); line-height: 1.3;
+  }
+  .quick-modal-header .quick-modal-sub { display: block; font-size: 12px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; font-family: var(--font-body); }
+  .quick-modal-close {
+    background: none; border: none; font-size: 20px; line-height: 1; color: var(--ink-soft); cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+  }
+
   /* ---------------- Bottom nav ---------------- */
   nav.bottom-nav {
     position: fixed; left: 0; right: 0; bottom: 0;
@@ -3274,6 +3307,7 @@ let ingredientsSummaryTab = 'daily'; // 'daily' = สรุปวัตถุด
 let ingredientsActionTab = 'purchase'; // 'purchase' = บันทึกซื้อเข้า | 'count' = นับสต็อกปิดร้าน
 let ingredientsHistoryTab = 'purchases'; // 'purchases' = ประวัติซื้อ | 'counts' = ประวัตินับสต็อก
 let ingredientsHistoryOpen = false; // แผงประวัติ พับ/กาง
+let quickModal = null; // { type: 'purchase' | 'count', ingredientId } — ป๊อปอัพกรอกข้อมูลด่วนจากตาราง
 
 async function renderIngredients(detailId) {
   if (detailId !== undefined) ingredientsDetailId = detailId;
@@ -3497,7 +3531,13 @@ async function renderIngredients(detailId) {
 
           const mainRow = `
         <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
-          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap;"><div style="display:flex;align-items:center;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div></td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;">
+            <div style="display:flex;align-items:center;white-space:nowrap;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;min-width:82px;">
+              <button type="button" class="btn-quick btn-quick-purchase" data-quick-purchase="${ing.id}">+ ซื้อเข้า</button>
+              <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับสต๊อก</button>
+            </div>
+          </td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(ing.unit)}</td>
@@ -3518,6 +3558,60 @@ async function renderIngredients(detailId) {
 
   const ledgerTotalValue = filteredLedgerRows.reduce((sum, r) => sum + (r.used_value || 0), 0);
 
+  // ---------- ป๊อปอัพกรอกข้อมูลด่วน (ซื้อเข้า / นับสต๊อก) — เปิดจากปุ่มลัดในตาราง ----------
+  let quickModalHtml = '';
+  const quickModalIng = quickModal ? allIngredients.find((i) => i.id === quickModal.ingredientId) : null;
+  if (quickModal && quickModalIng) {
+    if (quickModal.type === 'purchase') {
+      quickModalHtml = `
+      <div class="quick-modal-overlay" id="quick-modal-overlay">
+        <div class="quick-modal-sheet">
+          <div class="quick-modal-header">
+            <span class="quick-modal-title">บันทึกซื้อเข้า<span class="quick-modal-sub">${escapeHtml(quickModalIng.name)}</span></span>
+            <button type="button" class="quick-modal-close" data-quick-modal-close="1">✕</button>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="quick-purchase-qty">จำนวน (${escapeHtml(quickModalIng.unit)})</label>
+              <input type="number" min="0" step="any" id="quick-purchase-qty" autofocus />
+            </div>
+            <div class="field">
+              <label for="quick-purchase-cost">ราคา/หน่วย (บาท)</label>
+              <input type="number" min="0" step="any" id="quick-purchase-cost" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="quick-purchase-date">วันที่ซื้อ</label>
+            <input type="date" id="quick-purchase-date" value="${today}" />
+          </div>
+          <button class="btn btn-primary" id="btn-quick-save-purchase">บันทึกซื้อเข้า</button>
+        </div>
+      </div>`;
+    } else {
+      quickModalHtml = `
+      <div class="quick-modal-overlay" id="quick-modal-overlay">
+        <div class="quick-modal-sheet">
+          <div class="quick-modal-header">
+            <span class="quick-modal-title">นับสต๊อกปิดร้าน<span class="quick-modal-sub">${escapeHtml(quickModalIng.name)}</span></span>
+            <button type="button" class="quick-modal-close" data-quick-modal-close="1">✕</button>
+          </div>
+          <div class="row-item">
+            <span class="label">คงเหลือในระบบ</span>
+            <span class="value">${quickModalIng.current_stock} ${escapeHtml(quickModalIng.unit)}</span>
+          </div>
+          <div class="field" style="margin-top:12px;">
+            <label for="quick-count-closing">จำนวนที่นับได้ (${escapeHtml(quickModalIng.unit)})</label>
+            <input type="number" min="0" step="any" id="quick-count-closing" autofocus />
+          </div>
+          <div class="field">
+            <label for="quick-count-date">วันที่นับ</label>
+            <input type="date" id="quick-count-date" value="${today}" />
+          </div>
+          <button class="btn btn-primary" id="btn-quick-save-count">บันทึกนับสต็อก</button>
+        </div>
+      </div>`;
+    }
+  }
 
   $content.innerHTML = `
     <h1 class="section-title">วัตถุดิบ / สต็อก</h1>
@@ -3628,6 +3722,8 @@ async function renderIngredients(detailId) {
         <div id="usage-result" style="margin-top:14px;"></div>
       </div>
     </div>
+
+    ${quickModalHtml}
   `;
 
   document.getElementById('btn-add-ingredient').addEventListener('click', async () => {
@@ -3862,6 +3958,78 @@ async function renderIngredients(detailId) {
       }
     });
   });
+
+  // ---------- ปุ่มลัด ซื้อเข้า/นับสต๊อก + ป๊อปอัพกรอกข้อมูลด่วน ----------
+  document.querySelectorAll('[data-quick-purchase]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      quickModal = { type: 'purchase', ingredientId: btn.dataset.quickPurchase };
+      renderIngredients(ingredientsDetailId);
+    });
+  });
+
+  document.querySelectorAll('[data-quick-count]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      quickModal = { type: 'count', ingredientId: btn.dataset.quickCount };
+      renderIngredients(ingredientsDetailId);
+    });
+  });
+
+  const quickModalOverlay = document.getElementById('quick-modal-overlay');
+  if (quickModalOverlay) {
+    quickModalOverlay.addEventListener('click', (e) => {
+      if (e.target === quickModalOverlay) {
+        quickModal = null;
+        renderIngredients(ingredientsDetailId);
+      }
+    });
+  }
+
+  const quickModalCloseBtn = document.querySelector('[data-quick-modal-close]');
+  if (quickModalCloseBtn) {
+    quickModalCloseBtn.addEventListener('click', () => {
+      quickModal = null;
+      renderIngredients(ingredientsDetailId);
+    });
+  }
+
+  const quickSavePurchaseBtn = document.getElementById('btn-quick-save-purchase');
+  if (quickSavePurchaseBtn) {
+    quickSavePurchaseBtn.addEventListener('click', async () => {
+      const qty = Number(document.getElementById('quick-purchase-qty').value) || 0;
+      const cost = Number(document.getElementById('quick-purchase-cost').value) || 0;
+      const date = document.getElementById('quick-purchase-date').value;
+      if (qty <= 0) { showToast('กรุณาใส่จำนวนที่ซื้อ'); return; }
+      try {
+        await recordPurchase({ ingredient_id: quickModal.ingredientId, purchase_date: date, quantity: qty, unit_cost: cost });
+        showToast('บันทึกซื้อเข้าสำเร็จ');
+        quickModal = null;
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  }
+
+  const quickSaveCountBtn = document.getElementById('btn-quick-save-count');
+  if (quickSaveCountBtn) {
+    quickSaveCountBtn.addEventListener('click', async () => {
+      const closing = Number(document.getElementById('quick-count-closing').value);
+      const date = document.getElementById('quick-count-date').value;
+      if (Number.isNaN(closing) || document.getElementById('quick-count-closing').value.trim() === '') {
+        showToast('กรุณาใส่จำนวนที่นับได้'); return;
+      }
+      try {
+        const result = await recordStockCount({ ingredient_id: quickModal.ingredientId, count_date: date, closing_count: closing });
+        showToast(`บันทึกนับสต็อกสำเร็จ — ใช้ไป ${result.used_qty} หน่วย (${formatMoney(result.used_value)})`);
+        quickModal = null;
+        renderIngredients(ingredientsDetailId);
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+    });
+  }
 }
 
 // ------------------------------------------------------------

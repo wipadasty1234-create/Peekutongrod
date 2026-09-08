@@ -3453,32 +3453,7 @@ async function renderIngredients(detailId) {
     </div>`;
   }
 
-  // ---------- ตารางสรุปวัตถุดิบทั้งหมด (คลิกแถวเพื่อขยายแผงรายละเอียดแทรกอยู่ใต้แถวนั้นเลย) ----------
-  const tableRowsHtml = ingredients.length
-    ? ingredients
-        .map((ing) => {
-          const stamps = [];
-          if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
-          if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
-          if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
-          const selected = ingredientsDetailId === ing.id;
-
-          const mainRow = `
-        <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
-          <td style="padding:10px 8px;border-bottom:1px solid var(--line);font-weight:700;color:var(--ink);"><div style="display:flex;align-items:center;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div></td>
-          <td style="padding:10px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${ing.current_stock} ${escapeHtml(ing.unit)}</td>
-          <td style="padding:10px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
-          <td style="padding:10px 8px;border-bottom:1px solid var(--line);"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">${stamps.join('')}</div></td>
-        </tr>`;
-
-          const detailRow = selected
-            ? `<tr><td colspan="4" style="padding:0;border-bottom:1px solid var(--line);background:var(--paper-deep);">${detailPanelHtml}</td></tr>`
-            : '';
-
-          return mainRow + detailRow;
-        })
-        .join('')
-    : `<tr><td colspan="4" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบ</p><p>เพิ่มรายการแรกด้านบนได้เลย</p></div></td></tr>`;
+  // (หมายเหตุ: ตารางรายการวัตถุดิบถูกรวมเข้ากับ "สรุปรายวัน" ด้านล่างแล้ว ไม่ต้องสร้างตารางแยกอีกชุด)
 
   const categoryTabsHtml = `
     <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;">
@@ -3495,43 +3470,54 @@ async function renderIngredients(detailId) {
         .join('')}
     </div>`;
 
-  const tableHtml = `
-    ${categoryTabsHtml}
-    <div class="card" style="padding:0;overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:14px;">
-        <thead>
-          <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
-            <th style="padding:10px 8px;">วัตถุดิบ</th>
-            <th style="padding:10px 8px;text-align:right;">คงเหลือ</th>
-            <th style="padding:10px 8px;text-align:right;">ต้นทุน/หน่วย</th>
-            <th style="padding:10px 8px;">สถานะ</th>
-          </tr>
-        </thead>
-        <tbody>${tableRowsHtml}</tbody>
-      </table>
-    </div>`;
+  // ---------- ตารางสรุปวัตถุดิบรายวัน (ทุกรายการ ณ วันที่เดียว) — รวมคอลัมน์ต้นทุน/หน่วย + สถานะ + คลิกแถวเพื่อขยายแผงรายละเอียด ----------
+  const matchesActiveCategory = (category) =>
+    ingredientsActiveCategory === 'ทั้งหมด'
+      ? true
+      : ingredientsActiveCategory === 'ไม่ระบุหมวดหมู่'
+      ? !category
+      : category === ingredientsActiveCategory;
 
-  // ---------- ตารางสรุปวัตถุดิบรายวัน (ทุกรายการ ณ วันที่เดียว) ----------
-  const ledgerRowsHtml = ledgerRows.length
-    ? ledgerRows
+  const filteredLedgerRows = ledgerRows.filter((r) => matchesActiveCategory(r.ingredient.category));
+
+  const ledgerRowsHtml = filteredLedgerRows.length
+    ? filteredLedgerRows
         .map((r) => {
-          const closingDisplay = r.is_counted ? `${r.closing_count} ${escapeHtml(r.ingredient.unit)}` : `<span style="color:var(--ink-soft);">ยังไม่นับ</span>`;
-          const usedDisplay = r.is_counted ? `${r.used_qty} ${escapeHtml(r.ingredient.unit)}` : `<span style="color:var(--ink-soft);">รอปิดร้าน</span>`;
+          const ing = r.ingredient;
+          const closingDisplay = r.is_counted ? `${r.closing_count} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">ยังไม่นับ</span>`;
+          const usedDisplay = r.is_counted ? `${r.used_qty} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">รอปิดร้าน</span>`;
           const valueDisplay = r.is_counted ? formatMoney(r.used_value) : `<span style="color:var(--ink-soft);">—</span>`;
-          return `
-        <tr>
-          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;">${escapeHtml(r.ingredient.name)}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(r.ingredient.unit)}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(r.ingredient.unit)}</td>
+
+          const stamps = [];
+          if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
+          if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
+          if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
+
+          const selected = ingredientsDetailId === ing.id;
+
+          const mainRow = `
+        <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
+          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap;"><div style="display:flex;align-items:center;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div></td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(ing.unit)}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${closingDisplay}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${usedDisplay}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${valueDisplay}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">${stamps.join('')}</div></td>
         </tr>`;
+
+          const detailRow = selected
+            ? `<tr><td colspan="8" style="padding:0;border-bottom:1px solid var(--line);background:var(--paper-deep);">${detailPanelHtml}</td></tr>`
+            : '';
+
+          return mainRow + detailRow;
         })
         .join('')
-    : `<tr><td colspan="6" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบให้แสดง</p></div></td></tr>`;
+    : `<tr><td colspan="8" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบให้แสดง</p></div></td></tr>`;
 
-  const ledgerTotalValue = ledgerRows.reduce((sum, r) => sum + (r.used_value || 0), 0);
+  const ledgerTotalValue = filteredLedgerRows.reduce((sum, r) => sum + (r.used_value || 0), 0);
+
 
   $content.innerHTML = `
     <h1 class="section-title">วัตถุดิบ / สต็อก</h1>
@@ -3591,21 +3577,24 @@ async function renderIngredients(detailId) {
       </div>
 
       <div id="summary-panel-daily" style="${ingredientsSummaryTab === 'daily' ? '' : 'display:none;'}">
-        <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เลือกวันที่เพื่อดูยอดยกมา/ซื้อเข้า/นับได้ตอนปิดร้าน/ใช้ไปจริงของวัตถุดิบทุกตัว — ดูตอนเช้าเพื่อวางแผนงาน (แถวที่ยังไม่นับจะโชว์ยอดคงเหลือปัจจุบัน) หรือดูสรุปหลังปิดร้านแล้วก็ได้</p>
+        <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เลือกวันที่เพื่อดูยอดยกมา/ซื้อเข้า/นับได้ตอนปิดร้าน/ใช้ไปจริงของวัตถุดิบทุกตัว — ดูตอนเช้าเพื่อวางแผนงาน (แถวที่ยังไม่นับจะโชว์ยอดคงเหลือปัจจุบัน) หรือดูสรุปหลังปิดร้านแล้วก็ได้ คลิกที่แถวเพื่อดู/แก้ไขรายละเอียดของวัตถุดิบนั้น</p>
         <div class="field">
           <label for="ledger-date">วันที่</label>
           <input type="date" id="ledger-date" value="${ingredientsLedgerDate}" max="${today}" />
         </div>
+        ${categoryTabsHtml}
         <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead>
               <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
                 <th style="padding:8px;">วัตถุดิบ</th>
+                <th style="padding:8px;text-align:right;">ต้นทุน/หน่วย</th>
                 <th style="padding:8px;text-align:right;">ยอดยกมา</th>
                 <th style="padding:8px;text-align:right;">ซื้อเข้า</th>
                 <th style="padding:8px;text-align:right;">นับได้ปิดร้าน</th>
                 <th style="padding:8px;text-align:right;">ใช้ไปจริง</th>
                 <th style="padding:8px;text-align:right;">มูลค่าที่ใช้ไป</th>
+                <th style="padding:8px;">สถานะ</th>
               </tr>
             </thead>
             <tbody>${ledgerRowsHtml}</tbody>
@@ -3639,8 +3628,6 @@ async function renderIngredients(detailId) {
         <div id="usage-result" style="margin-top:14px;"></div>
       </div>
     </div>
-
-    ${tableHtml}
   `;
 
   document.getElementById('btn-add-ingredient').addEventListener('click', async () => {

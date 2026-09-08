@@ -812,9 +812,20 @@ async function generateDailySummary(summary_date) {
   const sales_ala_carte = sales_ala_carte_from_dishes > 0 ? sales_ala_carte_from_dishes : (entry.ala_carte_total || 0);
   const sales_takeaway = entry.takeaway_total;
 
-  // COGS = รวม used_value ของวัตถุดิบที่นับสต็อก "ตรงวันนี้พอดี"
+  // COGS = รวม used_value ของวัตถุดิบที่นับสต็อก "ตรงวันนี้พอดี" — ไม่รวมของใช้สิ้นเปลือง (ทิชชู/ถุงขยะ/
+  // น้ำยาล้างจาน ฯลฯ) เพราะไม่ใช่ต้นทุนอาหาร (Food Cost) จริงๆ แยกไปเป็น supplies_cost ต่างหาก เพื่อให้
+  // "ต้นทุนวัตถุดิบ (COGS)" ที่โชว์ในรายงานสะท้อนต้นทุนอาหารล้วนๆ ไม่ปนกับของใช้สิ้นเปลือง
   const stockCounts = await db.ingredient_stock_counts.where('count_date').equals(summary_date).toArray();
-  const cogs = stockCounts.reduce((sum, c) => sum + c.used_value, 0);
+  let cogs = 0;
+  let supplies_cost = 0;
+  for (const c of stockCounts) {
+    const ingredient = await db.ingredients.get(c.ingredient_id);
+    if (ingredient && ingredient.category === CONSUMABLE_CATEGORY) {
+      supplies_cost += c.used_value;
+    } else {
+      cogs += c.used_value;
+    }
+  }
 
   // ค่าถุง/ยางรัด (packaging) — คำนวณอัตโนมัติจาก default_packaging_fee × takeaway_count
   const packagingFee = Number(await getSetting('default_packaging_fee', 0));
@@ -854,7 +865,9 @@ async function generateDailySummary(summary_date) {
   const utility_is_estimated = waterResult.is_estimated || electricResult.is_estimated || internetResult.is_estimated;
   const gas_is_estimated = gasResult.is_estimated;
 
-  const operating_expense = otherFixedExpense + rent_cost + water_cost + electric_cost + internet_cost + gas_cost;
+  // ของใช้สิ้นเปลือง (supplies_cost) นับรวมเป็นส่วนหนึ่งของ operating_expense (เป็นต้นทุนดำเนินงาน ไม่ใช่ COGS)
+  // แต่ยังเก็บ field แยกไว้ใน daily_summary เพื่อโชว์ breakdown แยกหมวดได้ในรายงาน/ตารางวัตถุดิบ
+  const operating_expense = otherFixedExpense + rent_cost + water_cost + electric_cost + internet_cost + gas_cost + supplies_cost;
 
   // "รายรับจริง" (ถ้ากรอกไว้) ใช้เป็นฐานคำนวณกำไรจริงแทนยอดตามระบบ เพื่อสะท้อนเงินสด/โอนที่นับได้จริง
   // (ครอบคลุมส่วนต่างจากส่วนลด/แถม/นับผิด/เงินขาดที่ไม่ได้ถูกบันทึกเป็นรายการแยก)
@@ -880,6 +893,7 @@ async function generateDailySummary(summary_date) {
     cogs,
     packaging_cost,
     operating_expense,
+    supplies_cost,
     rent_cost,
     rent_is_estimated,
     water_cost,
@@ -1068,6 +1082,11 @@ async function listShifts() {
 
 // --- ingredients ---
 
+/** ของใช้สิ้นเปลือง (ทิชชู/ถุงขยะ/น้ำยาล้างจาน/ตะเกียบ ฯลฯ) ใช้ระบบนับสต็อกเดียวกับวัตถุดิบอาหาร
+ *  (ซื้อเข้า-นับสต็อก-คำนวณใช้ไปจริง เหมือนกันเป๊ะ) แต่ "ไม่ใช่ต้นทุนอาหาร" — ต้องแยกออกจาก COGS ในรายงาน
+ *  ไม่งั้นตัวเลข "ต้นทุนวัตถุดิบ" จะปนกับของใช้สิ้นเปลือง ทำให้เข้าใจต้นทุนอาหารจริงผิดไป */
+const CONSUMABLE_CATEGORY = 'ของใช้สิ้นเปลือง';
+
 async function createIngredient({ name, category = null, unit, reorder_point = 0, count_frequency = 'daily' }) {
   if (!['daily', 'weekly'].includes(count_frequency)) {
     throw new Error(`count_frequency ต้องเป็น 'daily' หรือ 'weekly' เท่านั้น (ได้ '${count_frequency}')`);
@@ -1209,6 +1228,39 @@ async function updateOperatingExpense(id, changes) {
   const regenTo = after?.end_date || before?.end_date || todayStr();
   const regenerated_dates = await regenerateSummariesInRange(regenFrom, regenTo);
   return { ...after, regenerated_dates_count: regenerated_dates.length };
+}
+
+/** เปลี่ยนยอดของรายการค่าใช้จ่ายประจำ "ตั้งแต่วันหนึ่งเป็นต้นไป" โดยไม่กระทบยอดเก่า — ปิดรายการเดิม
+ *  (end_date = วันก่อนหน้า effective_from) แล้วเปิดรายการใหม่ชื่อ/ความถี่เดิม ยอดใหม่ ให้อัตโนมัติ
+ *  เทียบเท่ากับพฤติกรรม addFixedCostEntry ของการ์ดต้นทุนคงที่ (เช่า/น้ำ/ไฟ/เน็ต) ทำให้ทั้งสองระบบ
+ *  มี mental model เดียวกัน: "แก้ผิดพลาด" (updateOperatingExpense) vs "เปลี่ยนยอดตั้งแต่วันนี้" (ฟังก์ชันนี้) */
+async function changeOperatingExpenseRate(id, { new_amount, effective_from, note = null }) {
+  const current = await db.operating_expenses.get(id);
+  if (!current) throw new Error('ไม่พบรายการค่าใช้จ่ายนี้');
+  if (current.start_date && effective_from <= current.start_date) {
+    throw new Error(`วันที่เริ่มมีผลใหม่ต้องอยู่หลังวันเริ่มของรายการเดิม (${current.start_date})`);
+  }
+  if (current.end_date) {
+    throw new Error('รายการนี้ถูกปิดไปแล้ว (มี end_date) ไม่สามารถเปลี่ยนยอดต่อได้ — เพิ่มรายการใหม่แทน');
+  }
+
+  const prevEnd = new Date(effective_from + 'T00:00:00');
+  prevEnd.setDate(prevEnd.getDate() - 1);
+  await db.operating_expenses.update(id, { end_date: prevEnd.toISOString().slice(0, 10) });
+
+  const newRecord = {
+    id: uuid(),
+    name: current.name,
+    amount: new_amount,
+    frequency: current.frequency,
+    start_date: effective_from,
+    end_date: null,
+    is_active: true,
+  };
+  await db.operating_expenses.add(newRecord);
+
+  const regenerated_dates = await regenerateSummariesInRange(effective_from, todayStr());
+  return { ...newRecord, regenerated_dates_count: regenerated_dates.length };
 }
 
 async function listOperatingExpenses({ activeOnly = false } = {}) {
@@ -1634,6 +1686,95 @@ async function getWeekdayBreakdown(fromDate, toDate) {
   return { from: fromDate, to: toDate, buckets, suggestion };
 }
 
+// ---------------------------------------------------------------------------
+// 7b) Owner Dashboard — Fixed Overhead breakdown + Break-even headcount รายวัน
+//     คำนวณสดจาก fixed_cost_entries / gas_purchases / operating_expenses ตรงๆ (ไม่พึ่ง daily_summary
+//     ที่อาจยังไม่ถูกสร้างสำหรับ "วันนี้" ถ้ายังไม่ได้บันทึกยอดขาย) เพื่อให้ owner เห็นตัวเลขได้ทันทีทุกเวลา
+// ---------------------------------------------------------------------------
+
+/** ต้นทุนคงที่ของวันที่ระบุ แยกตามหมวดหมู่ (เช่า/น้ำ/ไฟ/เน็ต/แก๊ส/ค่าแรง-อื่นๆ) + รวม
+ *  ตรรกะเดียวกับที่ generateDailySummary ใช้จริงในการคำนวณ P&L เป๊ะ เพื่อให้ตัวเลขตรงกันเสมอ */
+async function getDailyFixedOverheadBreakdown(dateStr) {
+  const rentResult = await getDailyFixedCost('rent', dateStr);
+  const waterResult = await getDailyFixedCost('water', dateStr);
+  const electricResult = await getDailyFixedCost('electric', dateStr);
+  const internetResult = await getDailyFixedCost('internet', dateStr);
+  const gasResult = await getDailyGasCost(dateStr);
+
+  const activeExpenses = (await db.operating_expenses.toArray()).filter((e) => {
+    if (!e.is_active) return false;
+    if (e.frequency === 'once') return e.start_date === dateStr;
+    if (e.start_date && e.start_date > dateStr) return false;
+    if (e.end_date && e.end_date < dateStr) return false;
+    return true;
+  });
+  const other = activeExpenses.reduce((sum, e) => {
+    if (e.frequency === 'once' || e.frequency === 'daily') return sum + e.amount;
+    const divisor = e.frequency === 'weekly' ? 7 : 30;
+    return sum + e.amount / divisor;
+  }, 0);
+
+  const breakdown = {
+    rent: rentResult.value,
+    water: waterResult.value,
+    electric: electricResult.value,
+    internet: internetResult.value,
+    gas: gasResult.value,
+    other,
+  };
+  breakdown.total = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  breakdown.has_estimated = rentResult.is_estimated || waterResult.is_estimated || electricResult.is_estimated || internetResult.is_estimated || gasResult.is_estimated;
+  return breakdown;
+}
+
+/** กำไรขั้นต้นต่อหัว (ประมาณการ) จากค่าเฉลี่ยย้อนหลัง windowDays วัน (default 30) นับถึงวันที่ระบุ
+ *  = (ยอดขายบุฟเฟต์รวม / จำนวนหัวบุฟเฟต์รวม) − (ต้นทุนวัตถุดิบรวม / จำนวนหัวบุฟเฟต์รวม)
+ *  ใช้ยอดขายบุฟเฟต์ (ไม่รวมแยกจาน/กลับบ้าน) เทียบกับหัวบุฟเฟต์ เพราะสองตัวนี้ผูกกันโดยตรงที่สุด
+ *  คืนค่า null ถ้าช่วงนั้นไม่มีข้อมูลหัวลูกค้าเลย (คำนวณจุดคุ้มทุนไม่ได้) */
+async function getContributionMarginPerHead(dateStr, windowDays = 30) {
+  const end = new Date(dateStr + 'T00:00:00');
+  const start = new Date(end);
+  start.setDate(start.getDate() - windowDays + 1);
+  const fromDate = start.toISOString().slice(0, 10);
+
+  const rows = await getDailySummaryRange(fromDate, dateStr);
+  const headcount = await getHeadcountSummary(fromDate, dateStr);
+  const totalHeads = headcount.adult_count + headcount.child_count;
+  if (totalHeads === 0) return null;
+
+  const totalBuffetSales = rows.reduce((sum, r) => sum + (r.sales_buffet || 0), 0);
+  const totalCogs = rows.reduce((sum, r) => sum + (r.cogs || 0), 0);
+
+  return {
+    revenue_per_head: totalBuffetSales / totalHeads,
+    cogs_per_head: totalCogs / totalHeads,
+    margin_per_head: (totalBuffetSales - totalCogs) / totalHeads,
+    based_on_heads: totalHeads,
+    window_days: windowDays,
+  };
+}
+
+/** จำนวนหัวคุ้มทุนของวันที่ระบุ = ต้นทุนคงที่ของวันนั้น ÷ กำไรขั้นต้นต่อหัว (ประมาณการย้อนหลัง)
+ *  เทียบกับหัวจริงของวันนั้น (ถ้ามีข้อมูลแล้ว) ว่าคุ้มทุนหรือยัง — เป็นตัวเลข "ประมาณการ" เพื่อช่วยตัดสินใจ
+ *  ไม่ใช่ตัวเลขบัญชีที่แม่นยำ 100% (กำไรขั้นต้นต่อหัวผันแปรได้ตามเมนู/ส่วนลดแต่ละวัน) */
+async function getBreakEvenHeadcount(dateStr) {
+  const overhead = await getDailyFixedOverheadBreakdown(dateStr);
+  const margin = await getContributionMarginPerHead(dateStr);
+  if (!margin || margin.margin_per_head <= 0) {
+    return { overhead, margin, breakeven_heads: null, actual_heads: null, is_covered: null };
+  }
+  const breakeven_heads = overhead.total / margin.margin_per_head;
+  const dayHeadcount = await getHeadcountSummary(dateStr, dateStr);
+  const actual_heads = dayHeadcount.adult_count + dayHeadcount.child_count;
+  return {
+    overhead,
+    margin,
+    breakeven_heads,
+    actual_heads,
+    is_covered: actual_heads >= breakeven_heads,
+  };
+}
+
 /** เมนูขายดี (น้ำ/ขนม) ในช่วงวันที่ระบุ เรียงจากขายมากไปน้อย */
 async function getTopSellingAddons(fromDate, toDate, limit = 10) {
   const rows = await db.daily_addon_sales.where('entry_date').between(fromDate, toDate, true, true).toArray();
@@ -1657,15 +1798,28 @@ async function getTopSellingAddons(fromDate, toDate, limit = 10) {
   return results.sort((a, b) => b.total_quantity - a.total_quantity).slice(0, limit);
 }
 
-/** สรุปยอดจ่ายจริง (cash) แยกตามหมวดหมู่ในช่วงวันที่ระบุ
- *  รวมทั้ง 2 แหล่ง: (1) expense_payments ที่กรอกเองในหน้า "การเงิน" (ค่าเช่า/ค่าแรง/ซ่อมบำรุง ฯลฯ)
- *  และ (2) ยอดซื้อวัตถุดิบจาก ingredient_purchases — ดึงมาให้อัตโนมัติ ไม่ต้องไปกรอกซ้ำในหน้าการเงินอีก
- *  (ไม่กระทบ COGS ในกำไรขาดทุนหลัก ซึ่งคิดจากการนับสต๊อกแยกต่างหากอยู่แล้ว รายงานนี้มีไว้ดูภาพรวม "เงินสดที่จ่ายออกจริง" เท่านั้น) */
+/** สรุปต้นทุนคงที่ + COGS แยกตามหมวดหมู่ในช่วงวันที่ระบุ — ดึงจาก daily_summary (accrual) โดยตรง
+ *  หมายเหตุ: เดิมฟังก์ชันนี้เคยดึงจาก expense_payments (สมุดจดจ่ายจริง) แต่หน้าจอนั้นถูกตัดออกไปแล้ว
+ *  เพราะไม่จำเป็นอีกต่อไป — ตอนนี้ค่าเช่า/น้ำ/ไฟ/เน็ต/แก๊ส ล้วนมีที่มาจริงเป็น accrual ใน daily_summary
+ *  อยู่แล้ว (แม่นกว่าเดิมด้วยซ้ำ เพราะ operating_expense ที่เห็นในหน้านี้คือค่าที่ใช้คำนวณกำไรจริง ไม่ใช่แค่
+ *  ยอดที่บังเอิญมีคนมากรอกจ่ายจริงไว้) ส่วนค่าแรง/อื่นๆ ที่เหลือ (ไม่มี field แยกใน daily_summary) คำนวณ
+ *  จากส่วนต่างของ operating_expense ลบผลรวม 5 หมวดที่มี field ชัดเจนแล้ว */
 async function getExpenseBreakdown(fromDate, toDate) {
-  const rows = await getExpensePaymentsRange(fromDate, toDate);
+  const rows = await getDailySummaryRange(fromDate, toDate);
   const byCategory = {};
+  const add = (label, amount) => {
+    if (amount) byCategory[label] = (byCategory[label] || 0) + amount;
+  };
+
   for (const r of rows) {
-    byCategory[r.category] = (byCategory[r.category] || 0) + r.amount;
+    add(FIXED_COST_LABELS.rent, r.rent_cost);
+    add(FIXED_COST_LABELS.water, r.water_cost);
+    add(FIXED_COST_LABELS.electric, r.electric_cost);
+    add(FIXED_COST_LABELS.internet, r.internet_cost);
+    add('ค่าแก๊ส', r.gas_cost);
+    add('ของใช้สิ้นเปลือง', r.supplies_cost);
+    const known = (r.rent_cost || 0) + (r.water_cost || 0) + (r.electric_cost || 0) + (r.internet_cost || 0) + (r.gas_cost || 0) + (r.supplies_cost || 0);
+    add('ค่าแรง/อื่นๆ', (r.operating_expense || 0) - known);
   }
 
   const purchases = await db.ingredient_purchases
@@ -1694,6 +1848,46 @@ async function getIngredientUsageReport(ingredient_id, fromDate, toDate) {
   const total_used_value = records.reduce((sum, r) => sum + r.used_value, 0);
 
   return { ingredient_id, from: fromDate, to: toDate, total_used_qty, total_used_value, records };
+}
+
+/** สรุปวัตถุดิบทั้งหมด (ทุกรายการที่ active) ของ "วันที่เดียว" ที่ระบุ — ยอดยกมา/ซื้อเข้า/นับได้ปิดร้าน/
+ *  ใช้ไปจริง/มูลค่าที่ใช้ไป ใช้ได้ทั้งดูตอนเช้าเพื่อวางแผน (ถ้ายังไม่ปิดร้าน จะโชว์ยอดคงเหลือ+ซื้อเข้าล่าสุด
+ *  ให้แทน โดยยังไม่มีเลข "ใช้ไปจริง" เพราะต้องรอนับปิดร้านก่อน) และดูสรุปย้อนหลังหลังปิดร้านแล้ว
+ *  is_counted=true คือมีการนับสต็อกของวันนั้นแล้วจริง (เลขแม่นยำ) / false คือยังไม่นับ (เลขคงเหลือเป็นค่า ณ ปัจจุบัน) */
+async function getDailyIngredientLedger(dateStr) {
+  const ingredients = await listIngredients({ activeOnly: true });
+  const rows = [];
+  for (const ing of ingredients) {
+    const countRecord = await db.ingredient_stock_counts.where('[ingredient_id+count_date]').equals([ing.id, dateStr]).first();
+    if (countRecord) {
+      rows.push({
+        ingredient: ing,
+        opening_stock: countRecord.opening_stock,
+        purchased_qty: countRecord.purchased_qty,
+        closing_count: countRecord.closing_count,
+        used_qty: countRecord.used_qty,
+        used_value: countRecord.used_value,
+        is_counted: true,
+      });
+    } else {
+      const purchasesToday = await db.ingredient_purchases
+        .where('ingredient_id')
+        .equals(ing.id)
+        .and((p) => p.purchase_date === dateStr)
+        .toArray();
+      const purchased_qty = purchasesToday.reduce((sum, p) => sum + p.quantity, 0);
+      rows.push({
+        ingredient: ing,
+        opening_stock: ing.current_stock,
+        purchased_qty,
+        closing_count: null,
+        used_qty: null,
+        used_value: null,
+        is_counted: false,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.ingredient.name.localeCompare(b.ingredient.name, 'th'));
 }
 
 // ---------------------------------------------------------------------------
@@ -1931,6 +2125,55 @@ function buildWeekdayChartSvg(buckets) {
     </svg>`;
 }
 
+/** Pie chart + legend สำหรับ breakdown ค่าใช้จ่าย — รับ array ของ {category, total_amount} (เรียงมากไปน้อยแล้ว) */
+function buildExpensePieChartSvg(items) {
+  const palette = ['var(--ember)', 'var(--moss)', 'var(--brass)', 'var(--ember-deep)', 'var(--ink-soft)', '#7A8B99', '#B08968', '#5C7A8A'];
+  const total = items.reduce((sum, i) => sum + i.total_amount, 0);
+  if (total <= 0) return '';
+
+  const cx = 100;
+  const cy = 100;
+  const r = 85;
+  let angleStart = -Math.PI / 2;
+  const slices = items.map((item, idx) => {
+    const fraction = item.total_amount / total;
+    const angleEnd = angleStart + fraction * 2 * Math.PI;
+    const color = palette[idx % palette.length];
+    let path;
+    if (fraction >= 0.9999) {
+      // ชิ้นเดียวครองทั้งวง (100%) — วาดเป็นวงกลมเต็ม เพราะ arc path เดียวมุม 360 องศาวาดไม่ได้ตรงๆ
+      path = `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`;
+    } else {
+      const x1 = cx + r * Math.cos(angleStart);
+      const y1 = cy + r * Math.sin(angleStart);
+      const x2 = cx + r * Math.cos(angleEnd);
+      const y2 = cy + r * Math.sin(angleEnd);
+      const largeArc = angleEnd - angleStart > Math.PI ? 1 : 0;
+      path = `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
+    }
+    angleStart = angleEnd;
+    return { path, color, label: item.category, amount: item.total_amount, pct: Math.round(fraction * 100) };
+  });
+
+  const paths = slices.map((s) => `<path d="${s.path}" fill="${s.color}" stroke="var(--white)" stroke-width="2" />`).join('');
+  const legend = slices
+    .map(
+      (s) => `
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;">
+        <span style="width:10px;height:10px;border-radius:2px;background:${s.color};display:inline-block;flex-shrink:0;"></span>
+        <span style="color:var(--ink);">${escapeHtml(s.label)}</span>
+        <span style="margin-left:auto;color:var(--ink-soft);white-space:nowrap;">${formatMoney(s.amount)} (${s.pct}%)</span>
+      </div>`
+    )
+    .join('');
+
+  return `
+    <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;">
+      <svg viewBox="0 0 200 200" style="width:150px;height:150px;flex-shrink:0;">${paths}</svg>
+      <div style="flex:1;min-width:160px;">${legend}</div>
+    </div>`;
+}
+
 async function renderDashboard(fromParam, toParam) {
   const today = todayStr();
   const from = fromParam || today;
@@ -1941,6 +2184,8 @@ async function renderDashboard(fromParam, toParam) {
   const headcount = await getHeadcountSummary(from, to);
   const lowStock = await listLowStockIngredients();
   const overdue = await listOverdueStockCounts(today);
+  const overhead = await getDailyFixedOverheadBreakdown(today);
+  const breakeven = await getBreakEvenHeadcount(today);
 
   let alertsHtml = '';
   if (lowStock.length > 0 || overdue.length > 0) {
@@ -1955,6 +2200,67 @@ async function renderDashboard(fromParam, toParam) {
   }
 
   const totalExpense = salesReport.totals.cogs + salesReport.totals.packaging_cost + salesReport.totals.operating_expense;
+
+  const overheadRowsHtml = [
+    ['ค่าเช่า', overhead.rent],
+    ['ค่าน้ำ', overhead.water],
+    ['ค่าไฟ', overhead.electric],
+    ['ค่าอินเทอร์เน็ต', overhead.internet],
+    ['ค่าแก๊ส', overhead.gas],
+    ['ค่าแรง/อื่นๆ', overhead.other],
+  ]
+    .filter(([, amount]) => amount > 0)
+    .map(([label, amount]) => `<div class="row-item"><span class="label">${label}</span><span class="value">${formatMoney(amount)}</span></div>`)
+    .join('');
+
+  const overheadCardHtml = `
+    <div class="card">
+      <h2>ต้นทุนคงที่วันนี้ (${today})</h2>
+      ${overheadRowsHtml || `<div class="empty-state"><p>ยังไม่มีข้อมูลต้นทุนคงที่ — ไปกรอกที่หน้า "การเงิน" ก่อน</p></div>`}
+      <div class="row-item" style="border-top:2px solid var(--line);margin-top:6px;padding-top:10px;">
+        <span class="label" style="font-weight:700;">รวมต้นทุนคงที่/วัน</span>
+        <span class="value" style="font-weight:700;">${formatMoney(overhead.total)}</span>
+      </div>
+      ${overhead.has_estimated ? `<p style="font-size:12px;color:var(--ink-soft);margin-top:8px;">บางรายการยังไม่มีข้อมูลของวันนี้โดยตรง ใช้ค่าประมาณการจากรอบล่าสุดแทนไปก่อน</p>` : ''}
+    </div>`;
+
+  let breakevenCardHtml;
+  if (!breakeven.margin) {
+    breakevenCardHtml = `
+    <div class="card">
+      <h2>จุดคุ้มทุนวันนี้</h2>
+      <div class="empty-state"><p>ยังไม่มีข้อมูลหัวลูกค้าย้อนหลังพอ (30 วัน) ให้ประมาณการ — บันทึกยอดขายต่อไปเรื่อยๆ แล้วกลับมาดูใหม่</p></div>
+    </div>`;
+  } else if (breakeven.breakeven_heads === null) {
+    breakevenCardHtml = `
+    <div class="card">
+      <h2>จุดคุ้มทุนวันนี้</h2>
+      <div class="empty-state"><p>กำไรขั้นต้นต่อหัวย้อนหลัง 30 วันติดลบหรือเป็นศูนย์ — คำนวณจุดคุ้มทุนไม่ได้ตอนนี้ (ลองตรวจสอบราคาขาย/ต้นทุนวัตถุดิบ)</p></div>
+    </div>`;
+  } else {
+    const pct = Math.min(100, Math.round((breakeven.actual_heads / breakeven.breakeven_heads) * 100));
+    breakevenCardHtml = `
+    <div class="card">
+      <h2>จุดคุ้มทุนวันนี้ (ประมาณการ)</h2>
+      <div class="row-item" style="border-bottom:none;">
+        <span class="label">หัวคุ้มทุนที่ต้องการ</span>
+        <span class="value" style="font-size:18px;">${Math.ceil(breakeven.breakeven_heads)} คน</span>
+      </div>
+      <div class="row-item" style="border-bottom:none;">
+        <span class="label">หัวจริงวันนี้ (ตามที่บันทึกไว้)</span>
+        <span class="value ${breakeven.is_covered ? 'profit-pos' : 'profit-neg'}" style="font-size:18px;">${breakeven.actual_heads} คน</span>
+      </div>
+      <div style="background:var(--line);border-radius:6px;height:14px;overflow:hidden;margin:10px 0;">
+        <div style="background:${breakeven.is_covered ? 'var(--ember)' : 'var(--ember-deep)'};height:100%;width:${pct}%;"></div>
+      </div>
+      <p style="font-size:13px;color:${breakeven.is_covered ? 'var(--ink-soft)' : 'var(--ember-deep)'};">
+        ${breakeven.is_covered ? `คุ้มทุนแล้ววันนี้ (เกินเป้า ${breakeven.actual_heads - Math.ceil(breakeven.breakeven_heads)} คน)` : `ยังขาดอีก ${Math.ceil(breakeven.breakeven_heads) - breakeven.actual_heads} คนถึงจะคุ้มทุน`}
+      </p>
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:6px;">
+        ประมาณการจากกำไรขั้นต้นเฉลี่ย ${formatMoney(breakeven.margin.margin_per_head)}/หัว (ย้อนหลัง ${breakeven.margin.window_days} วัน, ${breakeven.margin.based_on_heads} หัว) — เป็นตัวช่วยตัดสินใจ ไม่ใช่ตัวเลขบัญชีที่แม่นยำ 100%
+      </p>
+    </div>`;
+  }
 
   const rowsHtml = rows.length
     ? rows
@@ -1989,6 +2295,9 @@ async function renderDashboard(fromParam, toParam) {
     </div>
 
     ${alertsHtml}
+
+    ${overheadCardHtml}
+    ${breakevenCardHtml}
 
     <div class="card">
       <h2>รายรับ vs รายจ่าย</h2>
@@ -2512,7 +2821,8 @@ async function renderFinance() {
         <div class="row-item">
           <span class="label">${escapeHtml(e.name)} <span style="color:var(--ink-soft)">(${freqLabel})</span></span>
           <span class="value">${formatMoney(e.amount)}
-            <button class="btn-edit-text" data-edit-expense="${e.id}">แก้ไข</button>
+            <button class="btn-edit-text" data-edit-expense="${e.id}">แก้ผิดพลาด</button>
+            <button class="btn-edit-text" data-change-rate-expense="${e.id}">เปลี่ยนยอดตั้งแต่วันนี้</button>
             <button class="btn-danger-text" data-remove-expense="${e.id}">ลบ</button>
           </span>
         </div>`;
@@ -2574,6 +2884,7 @@ async function renderFinance() {
     <div class="card">
       <h2 id="exp-form-title">เพิ่มค่าใช้จ่ายประจำ</h2>
       <input type="hidden" id="exp-edit-id" value="" />
+      <input type="hidden" id="exp-change-id" value="" />
       <div class="field">
         <label for="exp-name">ชื่อรายการ</label>
         <input type="text" id="exp-name" placeholder="เช่น ค่าแรงพนักงาน, ค่าซ่อมบำรุง (ไม่ใช่ค่าเช่า/น้ำ/ไฟ/เน็ต/แก๊ส)" />
@@ -2683,12 +2994,30 @@ async function renderFinance() {
       const exp = expenses.find((x) => x.id === btn.dataset.editExpense);
       if (!exp) return;
       document.getElementById('exp-edit-id').value = exp.id;
+      document.getElementById('exp-change-id').value = '';
       document.getElementById('exp-name').value = exp.name;
       document.getElementById('exp-amount').value = exp.amount;
       document.getElementById('exp-frequency').value = exp.frequency;
       document.getElementById('exp-start-date').value = exp.start_date || '';
-      document.getElementById('exp-form-title').textContent = `แก้ไข: ${exp.name}`;
+      document.getElementById('exp-form-title').textContent = `แก้ผิดพลาด: ${exp.name}`;
       document.getElementById('btn-add-expense').textContent = 'บันทึกการแก้ไข';
+      document.getElementById('btn-cancel-edit-expense').style.display = 'inline-block';
+      document.getElementById('exp-form-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
+  document.querySelectorAll('[data-change-rate-expense]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const exp = expenses.find((x) => x.id === btn.dataset.changeRateExpense);
+      if (!exp) return;
+      document.getElementById('exp-change-id').value = exp.id;
+      document.getElementById('exp-edit-id').value = '';
+      document.getElementById('exp-name').value = exp.name;
+      document.getElementById('exp-amount').value = '';
+      document.getElementById('exp-frequency').value = exp.frequency;
+      document.getElementById('exp-start-date').value = todayStr();
+      document.getElementById('exp-form-title').textContent = `เปลี่ยนยอด "${exp.name}" ตั้งแต่วันที่ระบุ (ยอดเก่าไม่กระทบ)`;
+      document.getElementById('btn-add-expense').textContent = 'บันทึกยอดใหม่';
       document.getElementById('btn-cancel-edit-expense').style.display = 'inline-block';
       document.getElementById('exp-form-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
@@ -2696,6 +3025,7 @@ async function renderFinance() {
 
   document.getElementById('btn-cancel-edit-expense').addEventListener('click', () => {
     document.getElementById('exp-edit-id').value = '';
+    document.getElementById('exp-change-id').value = '';
     document.getElementById('exp-name').value = '';
     document.getElementById('exp-amount').value = '';
     document.getElementById('exp-frequency').value = 'monthly';
@@ -2707,7 +3037,28 @@ async function renderFinance() {
 
   document.getElementById('btn-add-expense').addEventListener('click', async () => {
     const editId = document.getElementById('exp-edit-id').value;
+    const changeId = document.getElementById('exp-change-id').value;
     const name = document.getElementById('exp-name').value.trim();
+
+    if (changeId) {
+      const new_amount = Number(document.getElementById('exp-amount').value) || 0;
+      const effective_from = document.getElementById('exp-start-date').value;
+      if (!effective_from) { showToast('กรุณาเลือกวันที่เริ่มมีผล'); return; }
+      if (!confirm(`ยืนยันเปลี่ยนยอด "${name}" เป็น ${formatMoney(new_amount)} ตั้งแต่วันที่ ${effective_from}? ยอดก่อนหน้าจะไม่ถูกแตะต้อง`)) return;
+      try {
+        const result = await changeOperatingExpenseRate(changeId, { new_amount, effective_from });
+        showToast(
+          result.regenerated_dates_count > 0
+            ? `เปลี่ยนยอดสำเร็จ — อัปเดต P&L ตั้งแต่ ${effective_from} แล้ว ${result.regenerated_dates_count} วัน`
+            : 'เปลี่ยนยอดสำเร็จ'
+        );
+        renderFinance();
+      } catch (err) {
+        showToast('เกิดข้อผิดพลาด: ' + err.message);
+      }
+      return;
+    }
+
     if (/เช่า|น้ำ|ไฟ|เน็ต|แก๊ส|internet|gas/i.test(name) && !confirm(`"${name}" ฟังดูคล้ายค่าเช่า/น้ำ/ไฟ/เน็ต/แก๊ส ซึ่งมีการ์ดจัดการแยกไว้ด้านบนแล้ว (กันนับซ้ำ) ยืนยันว่าต้องการเพิ่มเป็นค่าใช้จ่ายทั่วไปจริงๆ?`)) return;
     if (!name) { showToast('กรุณาใส่ชื่อรายการ'); return; }
     const payload = {
@@ -2718,7 +3069,7 @@ async function renderFinance() {
     };
     try {
       if (editId) {
-        if (!confirm('แก้ยอดนี้จะกระทบ P&L ย้อนหลังทุกวันที่รายการนี้เคย active มาก่อนด้วย\n\nถ้าราคาต่างกันจริงตั้งแต่วันหนึ่ง แนะนำให้ตั้ง "วันสิ้นสุด" ของรายการเดิมแทน แล้วเพิ่มรายการใหม่ จะแม่นกว่า\n\nยืนยันแก้ไขทับของเดิมเลยหรือไม่?')) return;
+        if (!confirm('แก้ยอดนี้จะกระทบ P&L ย้อนหลังทุกวันที่รายการนี้เคย active มาก่อนด้วย\n\nถ้าราคาต่างกันจริงตั้งแต่วันหนึ่ง ใช้ปุ่ม "เปลี่ยนยอดตั้งแต่วันนี้" แทนจะแม่นกว่า (ไม่กระทบยอดเก่า)\n\nยืนยันแก้ไขทับของเดิมเลยหรือไม่?')) return;
         const result = await updateOperatingExpense(editId, payload);
         showToast(
           result.regenerated_dates_count > 0
@@ -2818,7 +3169,7 @@ async function renderReports(fromParam, toParam) {
         </div>`
         )
         .join('')
-    : `<div class="empty-state"><p>ยังไม่มีรายการจ่ายจริงในช่วงนี้</p></div>`;
+    : `<div class="empty-state"><p>ยังไม่มีข้อมูลต้นทุนในช่วงนี้</p></div>`;
 
   const weekdayRowsHtml = weekday.buckets
     .map(
@@ -2872,8 +3223,9 @@ async function renderReports(fromParam, toParam) {
     </div>
 
     <div class="card">
-      <h2>ค่าใช้จ่ายจริงแยกตามหมวดหมู่</h2>
-      ${expenseBreakdownHtml}
+      <h2>ต้นทุนแยกตามหมวดหมู่</h2>
+      ${expenseBreakdown.length ? buildExpensePieChartSvg(expenseBreakdown) : ''}
+      <div style="margin-top:14px;">${expenseBreakdownHtml}</div>
     </div>
   `;
 
@@ -2889,18 +3241,36 @@ async function renderReports(fromParam, toParam) {
 // View: วัตถุดิบ / สต็อก (Ingredients)
 // ------------------------------------------------------------
 let ingredientsDetailId = null;
+let ingredientsActiveCategory = 'ทั้งหมด';
+let ingredientsLedgerDate = todayStr();
 
 async function renderIngredients(detailId) {
   if (detailId !== undefined) ingredientsDetailId = detailId;
 
   const today = todayStr();
-  const ingredients = await listIngredients({ activeOnly: true });
+  const allIngredients = await listIngredients({ activeOnly: true });
+  const categoriesInUse = [...new Set(allIngredients.map((i) => i.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+  const suggestedCategories = ['ของสด', 'ผัก', 'เนื้อสัตว์', 'ขนมหวาน', CONSUMABLE_CATEGORY];
+  const allCategoryOptions = [...new Set([...suggestedCategories, ...categoriesInUse])];
+  const hasUncategorized = allIngredients.some((i) => !i.category);
+
+  const categoryTabs = ['ทั้งหมด', ...categoriesInUse, ...(hasUncategorized ? ['ไม่ระบุหมวดหมู่'] : [])];
+  if (!categoryTabs.includes(ingredientsActiveCategory)) ingredientsActiveCategory = 'ทั้งหมด';
+
+  const ingredients =
+    ingredientsActiveCategory === 'ทั้งหมด'
+      ? allIngredients
+      : ingredientsActiveCategory === 'ไม่ระบุหมวดหมู่'
+      ? allIngredients.filter((i) => !i.category)
+      : allIngredients.filter((i) => i.category === ingredientsActiveCategory);
+
   const lowStock = new Set((await listLowStockIngredients()).map((i) => i.id));
   const overdueList = await listOverdueStockCounts(today);
   const overdueMap = Object.fromEntries(overdueList.map((o) => [o.ingredient.id, o.reason]));
   const uncountedToday = await listIngredientsUncountedToday(today);
   const todayEntry = await db.daily_entries.where('entry_date').equals(today).first();
   const todayClosed = todayEntry?.is_closed === true;
+  const ledgerRows = await getDailyIngredientLedger(ingredientsLedgerDate);
 
   // ---------- ตารางสรุปวัตถุดิบทั้งหมด ----------
   const tableRowsHtml = ingredients.length
@@ -2923,7 +3293,18 @@ async function renderIngredients(detailId) {
         .join('')
     : `<tr><td colspan="4" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบ</p><p>เพิ่มรายการแรกด้านบนได้เลย</p></div></td></tr>`;
 
+  const categoryTabsHtml = `
+    <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;">
+      ${categoryTabs
+        .map(
+          (c) =>
+            `<button class="btn btn-small ${c === ingredientsActiveCategory ? 'btn-primary' : 'btn-ghost'}" data-select-ing-category="${escapeHtml(c)}" style="white-space:nowrap;">${escapeHtml(c)}</button>`
+        )
+        .join('')}
+    </div>`;
+
   const tableHtml = `
+    ${categoryTabsHtml}
     <div class="card" style="padding:0;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>
@@ -2939,7 +3320,7 @@ async function renderIngredients(detailId) {
     </div>`;
 
   // ---------- แผงรายละเอียด (เปิดเมื่อแตะแถวในตาราง) ----------
-  const selectedIng = ingredientsDetailId ? ingredients.find((i) => i.id === ingredientsDetailId) : null;
+  const selectedIng = ingredientsDetailId ? allIngredients.find((i) => i.id === ingredientsDetailId) : null;
   let detailHtml = '';
 
   if (selectedIng) {
@@ -2995,6 +3376,13 @@ async function renderIngredients(detailId) {
       <div class="row-item">
         <span class="label">ต้นทุนเฉลี่ย/หน่วย</span>
         <span class="value">${formatMoney(selectedIng.current_avg_cost)}</span>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label for="detail-category">หมวดหมู่</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="detail-category" list="ing-category-options" value="${selectedIng.category ? escapeHtml(selectedIng.category) : ''}" style="flex:1;" />
+          <button class="btn btn-ghost btn-small" id="btn-save-category">บันทึก</button>
+        </div>
       </div>
 
       <h3 style="margin-top:14px;">ประวัติราคาซื้อรายล็อต <span style="font-size:12px;color:var(--ink-soft);font-weight:400;">(แก้ไข/ลบได้ — ระบบจะคำนวณต้นทุนเฉลี่ยและ COGS ของทุกวันหลังจากนั้นใหม่ให้อัตโนมัติ)</span></h3>
@@ -3060,6 +3448,28 @@ async function renderIngredients(detailId) {
     </div>`;
   }
 
+  // ---------- ตารางสรุปวัตถุดิบรายวัน (ทุกรายการ ณ วันที่เดียว) ----------
+  const ledgerRowsHtml = ledgerRows.length
+    ? ledgerRows
+        .map((r) => {
+          const closingDisplay = r.is_counted ? `${r.closing_count} ${escapeHtml(r.ingredient.unit)}` : `<span style="color:var(--ink-soft);">ยังไม่นับ</span>`;
+          const usedDisplay = r.is_counted ? `${r.used_qty} ${escapeHtml(r.ingredient.unit)}` : `<span style="color:var(--ink-soft);">รอปิดร้าน</span>`;
+          const valueDisplay = r.is_counted ? formatMoney(r.used_value) : `<span style="color:var(--ink-soft);">—</span>`;
+          return `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;">${escapeHtml(r.ingredient.name)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(r.ingredient.unit)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(r.ingredient.unit)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${closingDisplay}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${usedDisplay}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${valueDisplay}</td>
+        </tr>`;
+        })
+        .join('')
+    : `<tr><td colspan="6" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบให้แสดง</p></div></td></tr>`;
+
+  const ledgerTotalValue = ledgerRows.reduce((sum, r) => sum + (r.used_value || 0), 0);
+
   $content.innerHTML = `
     <h1 class="section-title">วัตถุดิบ / สต็อก</h1>
 
@@ -3075,16 +3485,25 @@ async function renderIngredients(detailId) {
           <input type="text" id="ing-unit" placeholder="กก., ขวด, ถุง" />
         </div>
         <div class="field">
+          <label for="ing-category">หมวดหมู่</label>
+          <input type="text" id="ing-category" list="ing-category-options" placeholder="เลือกหรือพิมพ์หมวดหมู่ใหม่" />
+          <datalist id="ing-category-options">
+            ${allCategoryOptions.map((c) => `<option value="${escapeHtml(c)}"></option>`).join('')}
+          </datalist>
+        </div>
+      </div>
+      <div class="field-grid">
+        <div class="field">
           <label for="ing-reorder">จุดสั่งซื้อ (ใกล้หมดเมื่อเหลือน้อยกว่านี้)</label>
           <input type="number" id="ing-reorder" min="0" value="0" />
         </div>
-      </div>
-      <div class="field">
-        <label for="ing-frequency">ความถี่การนับสต็อก</label>
-        <select id="ing-frequency">
-          <option value="daily">นับทุกวัน</option>
-          <option value="weekly">นับทุกสัปดาห์</option>
-        </select>
+        <div class="field">
+          <label for="ing-frequency">ความถี่การนับสต็อก</label>
+          <select id="ing-frequency">
+            <option value="daily">นับทุกวัน</option>
+            <option value="weekly">นับทุกสัปดาห์</option>
+          </select>
+        </div>
       </div>
       <button class="btn btn-ghost" id="btn-add-ingredient">+ เพิ่มวัตถุดิบ</button>
     </div>
@@ -3102,12 +3521,40 @@ async function renderIngredients(detailId) {
     </div>
 
     <div class="card">
-      <h2>สรุปการใช้วัตถุดิบรายวัน</h2>
+      <h2>สรุปวัตถุดิบรายวัน (ทุกรายการ)</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เลือกวันที่เพื่อดูยอดยกมา/ซื้อเข้า/นับได้ตอนปิดร้าน/ใช้ไปจริงของวัตถุดิบทุกตัว — ดูตอนเช้าเพื่อวางแผนงาน (แถวที่ยังไม่นับจะโชว์ยอดคงเหลือปัจจุบัน) หรือดูสรุปหลังปิดร้านแล้วก็ได้</p>
+      <div class="field">
+        <label for="ledger-date">วันที่</label>
+        <input type="date" id="ledger-date" value="${ingredientsLedgerDate}" max="${today}" />
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
+              <th style="padding:8px;">วัตถุดิบ</th>
+              <th style="padding:8px;text-align:right;">ยอดยกมา</th>
+              <th style="padding:8px;text-align:right;">ซื้อเข้า</th>
+              <th style="padding:8px;text-align:right;">นับได้ปิดร้าน</th>
+              <th style="padding:8px;text-align:right;">ใช้ไปจริง</th>
+              <th style="padding:8px;text-align:right;">มูลค่าที่ใช้ไป</th>
+            </tr>
+          </thead>
+          <tbody>${ledgerRowsHtml}</tbody>
+        </table>
+      </div>
+      <div class="row-item" style="border-top:2px solid var(--line);margin-top:6px;padding-top:10px;border-bottom:none;">
+        <span class="label" style="font-weight:700;">รวมมูลค่าที่ใช้ไป (เฉพาะรายการที่นับแล้ว)</span>
+        <span class="value" style="font-weight:700;">${formatMoney(ledgerTotalValue)}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>แนวโน้มการใช้วัตถุดิบ (รายตัว ตามช่วงวันที่)</h2>
       <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">ดูว่าวัตถุดิบแต่ละอย่างถูกใช้ไปมากน้อยแค่ไหนในแต่ละวัน เพื่อประเมินต้นทุนอาหาร</p>
       <div class="field">
         <label for="usage-ingredient">วัตถุดิบ</label>
         <select id="usage-ingredient">
-          ${ingredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}</option>`).join('')}
+          ${allIngredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}</option>`).join('')}
         </select>
       </div>
       <div class="field-grid">
@@ -3131,15 +3578,18 @@ async function renderIngredients(detailId) {
   document.getElementById('btn-add-ingredient').addEventListener('click', async () => {
     const name = document.getElementById('ing-name').value.trim();
     const unit = document.getElementById('ing-unit').value.trim();
+    const category = document.getElementById('ing-category').value.trim() || null;
     if (!name || !unit) { showToast('กรุณาใส่ชื่อและหน่วยนับ'); return; }
     try {
       await createIngredient({
         name,
         unit,
+        category,
         reorder_point: Number(document.getElementById('ing-reorder').value) || 0,
         count_frequency: document.getElementById('ing-frequency').value,
       });
       showToast('เพิ่มวัตถุดิบสำเร็จ');
+      ingredientsActiveCategory = category ? category : 'ไม่ระบุหมวดหมู่';
       renderIngredients(ingredientsDetailId);
     } catch (err) {
       showToast('เกิดข้อผิดพลาด: ' + err.message);
@@ -3148,6 +3598,11 @@ async function renderIngredients(detailId) {
 
   document.getElementById('btn-export-lots').addEventListener('click', () => {
     exportIngredientPurchaseLotsCsv();
+  });
+
+  document.getElementById('ledger-date').addEventListener('change', (e) => {
+    ingredientsLedgerDate = e.target.value;
+    renderIngredients(ingredientsDetailId);
   });
 
   document.getElementById('btn-view-usage')?.addEventListener('click', async () => {
@@ -3198,8 +3653,25 @@ async function renderIngredients(detailId) {
     });
   });
 
+  document.querySelectorAll('[data-select-ing-category]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      ingredientsActiveCategory = btn.dataset.selectIngCategory;
+      renderIngredients(ingredientsDetailId);
+    });
+  });
+
   const closeDetailBtn = document.querySelector('[data-close-detail]');
   if (closeDetailBtn) closeDetailBtn.addEventListener('click', () => renderIngredients(null));
+
+  const saveCategoryBtn = document.getElementById('btn-save-category');
+  if (saveCategoryBtn) {
+    saveCategoryBtn.addEventListener('click', async () => {
+      const category = document.getElementById('detail-category').value.trim() || null;
+      await updateIngredient(ingredientsDetailId, { category });
+      showToast('บันทึกหมวดหมู่แล้ว');
+      renderIngredients(ingredientsDetailId);
+    });
+  }
 
   const removeBtn = document.querySelector('[data-remove-ingredient]');
   if (removeBtn) {
@@ -3333,6 +3805,8 @@ window.__app = {
   addFixedCostEntry, getEntryForDate, getCurrentFixedCost, listFixedCostHistory, removeFixedCostEntry, getDailyFixedCost,
   recordGasPurchase, listGasPurchases, getDailyGasCost, removeGasPurchase,
   regenerateSummariesInRange,
+  getDailyFixedOverheadBreakdown, getContributionMarginPerHead, getBreakEvenHeadcount,
+  changeOperatingExpenseRate,
 };
 
 // ------------------------------------------------------------

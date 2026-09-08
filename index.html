@@ -1061,7 +1061,10 @@ async function removeMenuCategory(id) {
 
 // --- menu_items ---
 
-async function createMenuItem({ category_id, name, unit_label = null, default_price, item_type, is_addon_to_buffet = false }) {
+/** buffet_role: 'adult' | 'child' | null — ใช้ระบุว่าเมนูนี้ (ในหมวด "บุฟเฟต์") นับเป็นหัวผู้ใหญ่/เด็กตอนสรุปจำนวนหัวลูกค้า
+ *  ตั้งใจแยกออกมาเป็น field ชัดเจนแทนการเดาจากชื่อเมนู (เช่นเช็คว่ามีคำว่า "ผู้ใหญ่"/"เด็ก" ในชื่อไหม) เพราะถ้าเจ้าของร้าน
+ *  ไปแก้ชื่อเมนูในหน้าตั้งค่า การนับหัวจะเงียบๆ ผิดไปเลยโดยไม่มี error เตือน — ผูกกับ field ตรงๆ แบบนี้กันปัญหานั้นถาวร */
+async function createMenuItem({ category_id, name, unit_label = null, default_price, item_type, is_addon_to_buffet = false, buffet_role = null }) {
   const record = {
     id: uuid(),
     category_id,
@@ -1070,6 +1073,7 @@ async function createMenuItem({ category_id, name, unit_label = null, default_pr
     default_price,
     item_type, // 'dish' | 'addon' | 'packaging'
     is_addon_to_buffet,
+    buffet_role,
     is_active: true,
     created_at: nowIso(),
     updated_at: nowIso(),
@@ -1125,8 +1129,12 @@ async function listShifts() {
  *  (ซื้อเข้า-นับสต็อก-คำนวณใช้ไปจริง เหมือนกันเป๊ะ) แต่ "ไม่ใช่ต้นทุนอาหาร" — ต้องแยกออกจาก COGS ในรายงาน
  *  ไม่งั้นตัวเลข "ต้นทุนวัตถุดิบ" จะปนกับของใช้สิ้นเปลือง ทำให้เข้าใจต้นทุนอาหารจริงผิดไป */
 const CONSUMABLE_CATEGORY = 'ของใช้สิ้นเปลือง';
+const WEEKDAY_NAMES_TH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
 
-async function createIngredient({ name, category = null, unit, reorder_point = 0, count_frequency = 'daily' }) {
+/** weekly_count_day: 0-6 (อาทิตย์-เสาร์) หรือ null — กำหนดวันตายตัวสำหรับนับสต็อกของวัตถุดิบที่นับแบบรายสัปดาห์
+ *  เลือกได้แยกต่อวัตถุดิบแต่ละตัว (เช่น ของแห้งนับอาทิตย์ เครื่องปรุงนับพุธ) ถ้าไม่ระบุ (null) จะ fallback ไปใช้
+ *  กติกาเดิม คือ "เกิน 7 วันจากที่นับครั้งล่าสุด" แทน (ดู listOverdueStockCounts) */
+async function createIngredient({ name, category = null, unit, reorder_point = 0, count_frequency = 'daily', weekly_count_day = null }) {
   if (!['daily', 'weekly'].includes(count_frequency)) {
     throw new Error(`count_frequency ต้องเป็น 'daily' หรือ 'weekly' เท่านั้น (ได้ '${count_frequency}')`);
   }
@@ -1137,6 +1145,7 @@ async function createIngredient({ name, category = null, unit, reorder_point = 0
     unit,
     reorder_point,
     count_frequency,
+    weekly_count_day: count_frequency === 'weekly' ? weekly_count_day : null,
     current_stock: 0,
     current_avg_cost: 0,
     is_active: true,
@@ -1182,7 +1191,9 @@ async function listLowStockIngredients() {
 
 /** เช็ควัตถุดิบที่ "เกินกำหนดนับสต็อกแล้ว" ณ วันที่ระบุ (default = วันนี้)
  *  daily  -> ต้องมี record ของ checkDate พอดี ไม่งั้นถือว่ายังไม่ได้นับวันนี้
- *  weekly -> ถ้าห่างจากครั้งล่าสุด >= 7 วัน ถือว่าเกินกำหนด (หรือไม่เคยนับเลย) */
+ *  weekly (มี weekly_count_day) -> ต้องนับภายในสัปดาห์นั้นๆ นับจากวันที่กำหนดไว้ (เช่น "ทุกวันอาทิตย์") ถ้าถึงวันกำหนด
+ *           ของสัปดาห์นี้แล้วยังไม่มีรายการนับตั้งแต่วันนั้นเป็นต้นมา ถือว่าเกินกำหนด — เหมือนกิจวัตรตายตัวรายสัปดาห์
+ *  weekly (ไม่มี weekly_count_day) -> fallback กติกาเดิม คือห่างจากครั้งล่าสุด >= 7 วัน ถือว่าเกินกำหนด (หรือไม่เคยนับเลย) */
 async function listOverdueStockCounts(checkDate = new Date().toISOString().slice(0, 10)) {
   const ingredients = (await db.ingredients.toArray()).filter((i) => i.is_active);
   const overdue = [];
@@ -1198,6 +1209,19 @@ async function listOverdueStockCounts(checkDate = new Date().toISOString().slice
       if (dayClosed) continue; // ร้านปิดวันนี้ -> ไม่ต้องนับสต็อกรายวัน ไม่ถือว่าเกินกำหนด
       const countedToday = counts.some((c) => c.count_date === checkDate);
       if (!countedToday) overdue.push({ ingredient: ing, reason: 'ยังไม่ได้นับวันนี้', last_count_date: lastCount?.count_date ?? null });
+    } else if (ing.count_frequency === 'weekly' && ing.weekly_count_day !== null && ing.weekly_count_day !== undefined) {
+      if (dayClosed) continue; // ร้านปิดวันนี้ -> ไม่เช็ควันกำหนดของวันนี้ (เหมือนของรายวัน)
+      const checkDateObj = new Date(checkDate + 'T00:00:00');
+      const daysSinceDue = (checkDateObj.getDay() - ing.weekly_count_day + 7) % 7;
+      const dueDateObj = new Date(checkDateObj);
+      dueDateObj.setDate(dueDateObj.getDate() - daysSinceDue);
+      const dueDateStr = dueDateObj.toISOString().slice(0, 10);
+      const countedSinceDue = counts.some((c) => c.count_date >= dueDateStr);
+      if (!countedSinceDue) {
+        const weekdayName = WEEKDAY_NAMES_TH[ing.weekly_count_day];
+        const reason = daysSinceDue === 0 ? `ถึงกำหนดนับวันนี้ (ทุกวัน${weekdayName})` : `เกินกำหนดนับแล้ว ${daysSinceDue} วัน (กำหนดนับทุกวัน${weekdayName})`;
+        overdue.push({ ingredient: ing, reason, last_count_date: lastCount?.count_date ?? null });
+      }
     } else if (ing.count_frequency === 'weekly') {
       if (!lastCount) {
         overdue.push({ ingredient: ing, reason: 'ยังไม่เคยนับเลย', last_count_date: null });
@@ -1612,11 +1636,12 @@ async function getSalesReport(fromDate, toDate) {
 }
 
 /** สรุปจำนวนหัวลูกค้าบุฟเฟต์ + จำนวนบิลกลับบ้าน ในช่วงวันที่ระบุ
- *  ที่มาหลัก: daily_addon_sales ของเมนูในหมวดหมู่ 'บุฟเฟต์' (แยกผู้ใหญ่/เด็กด้วยชื่อเมนู)
- *  ถ้าวันนั้นไม่มีรายการเมนูบุฟเฟต์เลย (ข้อมูลเก่าก่อนรวมบุฟเฟต์เข้ากับรายการเมนู) -> fallback ไปใช้ field เดิม */
+ *  ที่มาหลัก: daily_addon_sales ของเมนูที่ตั้ง buffet_role ไว้ ('adult'/'child') — ผูกกับ field ตรงๆ ไม่ใช่ชื่อเมนู
+ *  เพื่อไม่ให้พังถ้ามีคนไปแก้ชื่อเมนูทีหลัง (ดูหมายเหตุที่ createMenuItem)
+ *  ถ้าวันนั้นไม่มีรายการเมนูบุฟเฟต์เลย (ข้อมูลเก่ามากๆ ก่อนมี daily_addon_sales) -> fallback ไปใช้ field เดิมของ daily_entries */
 async function getHeadcountSummary(fromDate, toDate) {
   const entries = await db.daily_entries.where('entry_date').between(fromDate, toDate, true, true).toArray();
-  const buffetCategory = await db.menu_categories.where('name').equals('บุฟเฟต์').first();
+  const buffetRoleByMenuItem = Object.fromEntries((await db.menu_items.toArray()).map((m) => [m.id, m.buffet_role || null]));
 
   const result = { adult_count: 0, child_count: 0, takeaway_count: 0, days_open: 0, days_closed: 0 };
 
@@ -1627,15 +1652,11 @@ async function getHeadcountSummary(fromDate, toDate) {
 
     let adultQty = 0;
     let childQty = 0;
-    if (buffetCategory) {
-      const rows = await db.daily_addon_sales.where('entry_date').equals(e.entry_date).toArray();
-      for (const row of rows) {
-        const menuItem = await db.menu_items.get(row.menu_item_id);
-        if (menuItem?.category_id === buffetCategory.id) {
-          if (menuItem.name.includes('ผู้ใหญ่')) adultQty += row.quantity;
-          else if (menuItem.name.includes('เด็ก')) childQty += row.quantity;
-        }
-      }
+    const rows = await db.daily_addon_sales.where('entry_date').equals(e.entry_date).toArray();
+    for (const row of rows) {
+      const role = buffetRoleByMenuItem[row.menu_item_id];
+      if (role === 'adult') adultQty += row.quantity;
+      else if (role === 'child') childQty += row.quantity;
     }
     if (adultQty === 0 && childQty === 0) {
       adultQty = e.buffet_adult_count || 0;
@@ -1837,12 +1858,11 @@ async function getTopSellingAddons(fromDate, toDate, limit = 10) {
   return results.sort((a, b) => b.total_quantity - a.total_quantity).slice(0, limit);
 }
 
-/** สรุปต้นทุนคงที่ + COGS แยกตามหมวดหมู่ในช่วงวันที่ระบุ — ดึงจาก daily_summary (accrual) โดยตรง
- *  หมายเหตุ: เดิมฟังก์ชันนี้เคยดึงจาก expense_payments (สมุดจดจ่ายจริง) แต่หน้าจอนั้นถูกตัดออกไปแล้ว
- *  เพราะไม่จำเป็นอีกต่อไป — ตอนนี้ค่าเช่า/น้ำ/ไฟ/เน็ต/แก๊ส ล้วนมีที่มาจริงเป็น accrual ใน daily_summary
- *  อยู่แล้ว (แม่นกว่าเดิมด้วยซ้ำ เพราะ operating_expense ที่เห็นในหน้านี้คือค่าที่ใช้คำนวณกำไรจริง ไม่ใช่แค่
- *  ยอดที่บังเอิญมีคนมากรอกจ่ายจริงไว้) ส่วนค่าแรง/อื่นๆ ที่เหลือ (ไม่มี field แยกใน daily_summary) คำนวณ
- *  จากส่วนต่างของ operating_expense ลบผลรวม 5 หมวดที่มี field ชัดเจนแล้ว */
+/** สรุปต้นทุนคงที่ + COGS แยกตามหมวดหมู่ในช่วงวันที่ระบุ — ทุกรายการในกราฟหลักเป็นฐาน "accrual" (ใช้จริง)
+ *  เดียวกับที่ใช้คำนวณกำไรสุทธิทุกที่ในระบบ (รวมยอดแล้วต้องตรงกับ "ต้นทุน+ค่าใช้จ่าย" ในตารางสรุปรายเดือนเป๊ะ)
+ *  ก่อนหน้านี้เคยเอา "ยอดซื้อวัตถุดิบ" (เงินสดที่จ่ายจริง) มาปนอยู่ในกราฟเดียวกับต้นทุนแบบ accrual — ทำให้ยอดรวม
+ *  ไม่ตรงกับหน้าอื่นและสับสนได้ง่าย เพราะซื้อของเก็บสต๊อกไว้ ≠ ของที่ใช้จริงในช่วงนั้น จึงแยก "เงินสดจ่ายซื้อวัตถุดิบ"
+ *  ออกมาเป็นตัวเลขต่างหาก (cash_purchase_total) ไม่ปนในกราฟหลัก */
 async function getExpenseBreakdown(fromDate, toDate) {
   const rows = await getDailySummaryRange(fromDate, toDate);
   const byCategory = {};
@@ -1861,18 +1881,28 @@ async function getExpenseBreakdown(fromDate, toDate) {
     add('ค่าแรง/อื่นๆ', (r.operating_expense || 0) - known);
   }
 
-  const purchases = await db.ingredient_purchases
-    .where('purchase_date')
-    .between(fromDate, toDate, true, true)
-    .toArray();
-  const purchaseTotal = purchases.reduce((sum, p) => sum + p.total_cost, 0);
-  if (purchaseTotal > 0) {
-    byCategory['วัตถุดิบ (ซื้อเข้า)'] = (byCategory['วัตถุดิบ (ซื้อเข้า)'] || 0) + purchaseTotal;
+  // COGS แยกตามหมวดหมู่วัตถุดิบ (accrual — จากมูลค่าที่ "ใช้จริง" ตอนนับสต็อก ฐานเดียวกับ COGS รวมทุกที่ในระบบ)
+  const ingredientCache = {};
+  const getIngredient = async (id) => {
+    if (!(id in ingredientCache)) ingredientCache[id] = await db.ingredients.get(id);
+    return ingredientCache[id];
+  };
+  const counts = await db.ingredient_stock_counts.where('count_date').between(fromDate, toDate, true, true).toArray();
+  for (const c of counts) {
+    const ing = await getIngredient(c.ingredient_id);
+    if (!ing || ing.category === CONSUMABLE_CATEGORY) continue; // ของใช้สิ้นเปลืองนับไปแล้วจาก supplies_cost ด้านบน
+    add(`วัตถุดิบ: ${ing.category || 'ไม่ระบุหมวด'}`, c.used_value);
   }
 
-  return Object.entries(byCategory)
+  const categories = Object.entries(byCategory)
     .map(([category, total_amount]) => ({ category, total_amount }))
     .sort((a, b) => b.total_amount - a.total_amount);
+
+  // เงินสดที่จ่ายจริงไปซื้อวัตถุดิบในช่วงนี้ — แยกไว้ต่างหาก ไม่ใช่ตัวเดียวกับ COGS ด้านบน (ซื้อเก็บสต๊อก ≠ ใช้จริง)
+  const purchases = await db.ingredient_purchases.where('purchase_date').between(fromDate, toDate, true, true).toArray();
+  const cash_purchase_total = purchases.reduce((sum, p) => sum + p.total_cost, 0);
+
+  return { categories, cash_purchase_total };
 }
 
 /** สรุปการใช้วัตถุดิบ (จากการนับสต็อก) ของ ingredient เดียว ในช่วงวันที่ระบุ */
@@ -1909,20 +1939,36 @@ async function getDailyIngredientLedger(dateStr) {
         is_counted: true,
       });
     } else {
-      const purchasesToday = await db.ingredient_purchases
+      // ยังไม่มีการนับสต็อกของวันนี้ — คำนวณ "ยอดยกมา ณ วันนี้จริงๆ" สดๆ โดยอิงการนับครั้งล่าสุดก่อนวันนี้
+      // (ห้ามใช้ ing.current_stock ตรงๆ เพราะเป็นยอดคงเหลือปัจจุบัน "ล่าสุดของระบบ" ซึ่งรวมของที่ซื้อของวันนี้
+      //  หรือแม้แต่วันหลังจากนี้ไปแล้ว — ถ้าเอามาใส่ในช่อง "ยอดยกมา" พร้อมกับบวกคอลัมน์ "ซื้อเข้า" อีกที
+      //  จะกลายเป็นนับของซื้อวันนี้ซ้ำ 2 รอบ และถ้าดูวันเก่าที่ลืมนับ จะเห็นยอดของวันนี้ปนอยู่ผิดๆ ด้วย)
+      const priorCounts = await db.ingredient_stock_counts
         .where('ingredient_id')
         .equals(ing.id)
-        .and((p) => p.purchase_date === dateStr)
+        .and((c) => c.count_date < dateStr)
+        .sortBy('count_date');
+      const lastCount = priorCounts.length ? priorCounts[priorCounts.length - 1] : null;
+      const opening_stock = lastCount ? lastCount.closing_count : 0;
+
+      // "ซื้อเข้า" ของแถวนี้ = ของที่ซื้อทั้งหมดตั้งแต่หลังการนับครั้งล่าสุด จนถึงวันนี้ (รวมของหลายวันถ้ายังไม่ได้นับมาหลายวันแล้ว)
+      // ใช้สูตรเดียวกับตอนคำนวณจริงใน recalculateIngredientLedger เพื่อให้ตัวเลขตรงกันเป๊ะเมื่อกดนับจริงในภายหลัง
+      const purchasesSinceLastCount = await db.ingredient_purchases
+        .where('ingredient_id')
+        .equals(ing.id)
+        .and((p) => (lastCount === null || p.purchase_date > lastCount.count_date) && p.purchase_date <= dateStr)
         .toArray();
-      const purchased_qty = purchasesToday.reduce((sum, p) => sum + p.quantity, 0);
+      const purchased_qty = purchasesSinceLastCount.reduce((sum, p) => sum + p.quantity, 0);
+
       rows.push({
         ingredient: ing,
-        opening_stock: ing.current_stock,
+        opening_stock,
         purchased_qty,
         closing_count: null,
         used_qty: null,
         used_value: null,
         is_counted: false,
+        days_since_last_count: lastCount ? diffDaysInclusive(lastCount.count_date, dateStr) - 1 : null,
       });
     }
   }
@@ -2100,7 +2146,7 @@ async function bootstrapDefaults() {
 
   // ย้ายราคาบุฟเฟต์เดิม (ตาราง buffet_packages รุ่นก่อน) มาเป็นเมนูปกติในหมวด "บุฟเฟต์"
   // ทำครั้งเดียวตอนยังไม่มีเมนูนี้ — ถ้าเคยตั้งราคาไว้ก่อนอัปเดต จะดึงราคาเดิมมาใช้ ไม่รีเซ็ตเป็น 0
-  const ensureBuffetMenuItem = async (name, legacyPackageName) => {
+  const ensureBuffetMenuItem = async (name, legacyPackageName, buffet_role) => {
     const existing = await db.menu_items.where('name').equals(name).first();
     if (existing) return existing;
     const legacyPkg = await db.buffet_packages.where('name').equals(legacyPackageName).first();
@@ -2109,10 +2155,21 @@ async function bootstrapDefaults() {
       name,
       default_price: legacyPkg?.price || 0,
       item_type: 'standard',
+      buffet_role,
     });
   };
-  await ensureBuffetMenuItem('บุฟเฟต์ผู้ใหญ่', 'ผู้ใหญ่');
-  await ensureBuffetMenuItem('บุฟเฟต์เด็ก', 'เด็ก');
+  await ensureBuffetMenuItem('บุฟเฟต์ผู้ใหญ่', 'ผู้ใหญ่', 'adult');
+  await ensureBuffetMenuItem('บุฟเฟต์เด็ก', 'เด็ก', 'child');
+
+  // migration ครั้งเดียว: ติดตั้งเก่าก่อนมี buffet_role field — เมนูในหมวดบุฟเฟต์ที่ยังไม่มี role เลย
+  // ให้เดาจากชื่อแบบเดิม (ผู้ใหญ่/เด็ก) ใส่ให้ครั้งเดียว จากนี้ไปทุกที่ในระบบจะอ้างอิง field นี้แทนชื่อแล้ว
+  const buffetItemsNeedingMigration = await db.menu_items.where('category_id').equals(buffetCategory.id).toArray();
+  for (const item of buffetItemsNeedingMigration) {
+    if (item.buffet_role !== undefined && item.buffet_role !== null) continue;
+    if (item.name.includes('ผู้ใหญ่')) await updateMenuItem(item.id, { buffet_role: 'adult' });
+    else if (item.name.includes('เด็ก')) await updateMenuItem(item.id, { buffet_role: 'child' });
+    else await updateMenuItem(item.id, { buffet_role: null });
+  }
 }
 
 // ------------------------------------------------------------
@@ -2552,14 +2609,20 @@ async function renderEntry(dateStr) {
       if (!closed) {
         const qtyInputs = document.querySelectorAll('.qty-input');
         for (const qtyInput of qtyInputs) {
-          const priceInput = document.querySelector(`[data-price-for="${qtyInput.dataset.menuItemId}"]`);
+          const menuItemId = qtyInput.dataset.menuItemId;
+          const quantity = Number(qtyInput.value) || 0;
+          // เมนูที่ไม่เคยขาย (ไม่มี record เดิม) และวันนี้ก็ยังเป็น 0 อยู่ — ข้ามไปเลย ไม่ต้องสร้างแถว/log เปล่าๆ
+          // ทุกเมนูทุกวัน (ถ้าเคยมี record อยู่แล้วแต่แก้เป็น 0 ยังคงบันทึกตามปกติ เพื่อให้แก้ไขข้อมูลเดิมได้ถูกต้อง)
+          if (quantity === 0 && !salesMap[menuItemId]) continue;
+
+          const priceInput = document.querySelector(`[data-price-for="${menuItemId}"]`);
           const priceValue = Number(priceInput.value) || 0;
           const defaultPrice = Number(priceInput.dataset.defaultPrice);
           const isOverridden = priceValue !== defaultPrice;
           await recordAddonSale({
             entry_date: targetDate,
-            menu_item_id: qtyInput.dataset.menuItemId,
-            quantity: Number(qtyInput.value) || 0,
+            menu_item_id: menuItemId,
+            quantity,
             unit_price_override: priceValue,
             price_override_reason: isOverridden ? note : null,
           });
@@ -2613,9 +2676,15 @@ async function renderMenuSettings() {
           const rowsHtml = catItems
             .map(
               (item) => `
-            <div class="row-item" style="align-items:center;">
+            <div class="row-item" style="align-items:center;flex-wrap:wrap;gap:6px;">
               <span class="label">${escapeHtml(item.name)}</span>
-              <span class="value" style="display:flex; align-items:center; gap:6px;">
+              <span class="value" style="display:flex; align-items:center; gap:6px;flex-wrap:wrap;">
+                ${cat.name === 'บุฟเฟต์' ? `
+                <select class="edit-role-select" data-role-item-id="${item.id}" title="ใช้ตอนสรุปจำนวนหัวลูกค้าในแดชบอร์ด/รายงาน" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);">
+                  <option value="adult" ${item.buffet_role === 'adult' ? 'selected' : ''}>นับหัวผู้ใหญ่</option>
+                  <option value="child" ${item.buffet_role === 'child' ? 'selected' : ''}>นับหัวเด็ก</option>
+                  <option value="" ${!item.buffet_role ? 'selected' : ''}>ไม่นับหัว</option>
+                </select>` : ''}
                 <input type="number" min="0" step="any" class="edit-price-input" data-item-id="${item.id}" data-current-price="${item.default_price}" value="${item.default_price}" style="width:76px;" />
                 <button class="btn-ghost" data-save-price="${item.id}" style="padding:4px 8px; font-size:12px;">บันทึกราคา</button>
                 <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
@@ -2657,9 +2726,25 @@ async function renderMenuSettings() {
         <label for="f-new-category-name">ชื่อหมวดหมู่ใหม่</label>
         <input type="text" id="f-new-category-name" placeholder="เช่น ของหวาน" />
       </div>
+      <div class="field" id="new-item-role-field" style="display:none;">
+        <label for="f-item-role">นับหัวเป็น (สำหรับสรุปจำนวนหัวลูกค้า)</label>
+        <select id="f-item-role">
+          <option value="">ไม่นับหัว</option>
+          <option value="adult">ผู้ใหญ่</option>
+          <option value="child">เด็ก</option>
+        </select>
+      </div>
       <button class="btn btn-ghost" id="btn-add-item">+ เพิ่มเมนู</button>
     </div>
   `;
+
+  const buffetCategoryIds = new Set(categories.filter((c) => c.name === 'บุฟเฟต์').map((c) => c.id));
+  const toggleItemRoleField = () => {
+    const val = document.getElementById('f-item-category').value;
+    document.getElementById('new-item-role-field').style.display = buffetCategoryIds.has(val) ? '' : 'none';
+  };
+  toggleItemRoleField();
+  document.getElementById('f-item-category').addEventListener('change', toggleItemRoleField);
 
   document.getElementById('f-item-category').addEventListener('change', (e) => {
     document.getElementById('new-category-field').style.display = e.target.value === '__new__' ? '' : 'none';
@@ -2681,12 +2766,21 @@ async function renderMenuSettings() {
         name,
         default_price: Number(document.getElementById('f-item-price').value) || 0,
         item_type: 'standard',
+        buffet_role: buffetCategoryIds.has(categoryId) ? (document.getElementById('f-item-role').value || null) : null,
       });
       showToast('เพิ่มเมนูสำเร็จ');
       renderMenuSettings();
     } catch (err) {
       showToast('เกิดข้อผิดพลาด: ' + err.message);
     }
+  });
+
+  document.querySelectorAll('[data-role-item-id]').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+      await updateMenuItem(sel.dataset.roleItemId, { buffet_role: sel.value || null });
+      showToast('อัปเดตการนับหัวแล้ว');
+      renderMenuSettings();
+    });
   });
 
   document.querySelectorAll('[data-remove-item]').forEach((btn) => {
@@ -3214,9 +3308,10 @@ async function renderReports(fromParam, toParam) {
       </div>`
     : `<div class="empty-state"><p>ยังไม่มีข้อมูลในช่วงนี้</p></div>`;
 
-  const maxExpense = expenseBreakdown.length ? Math.max(...expenseBreakdown.map((e) => e.total_amount)) : 1;
-  const expenseBreakdownHtml = expenseBreakdown.length
-    ? expenseBreakdown
+  const expenseCategories = expenseBreakdown.categories;
+  const maxExpense = expenseCategories.length ? Math.max(...expenseCategories.map((e) => e.total_amount)) : 1;
+  const expenseBreakdownHtml = expenseCategories.length
+    ? expenseCategories
         .map(
           (e) => `
         <div style="margin-bottom:10px;">
@@ -3285,8 +3380,15 @@ async function renderReports(fromParam, toParam) {
 
     <div class="card">
       <h2>ต้นทุนแยกตามหมวดหมู่</h2>
-      ${expenseBreakdown.length ? buildExpensePieChartSvg(expenseBreakdown) : ''}
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:-6px;">คิดแบบ "ใช้จริง" (accrual) ฐานเดียวกับกำไรสุทธิที่ใช้ทั้งระบบ — รวมยอดในหน้านี้จะตรงกับ "ต้นทุน+ค่าใช้จ่าย" ในตารางสรุปรายเดือนด้านบนเป๊ะ</p>
+      ${expenseCategories.length ? buildExpensePieChartSvg(expenseCategories) : ''}
       <div style="margin-top:14px;">${expenseBreakdownHtml}</div>
+      ${expenseBreakdown.cash_purchase_total > 0 ? `
+      <div class="row-item" style="border-top:2px solid var(--line);margin-top:10px;padding-top:10px;">
+        <span class="label">เงินสดจ่ายซื้อวัตถุดิบช่วงนี้ (แยกจาก COGS ด้านบน)</span>
+        <span class="value">${formatMoney(expenseBreakdown.cash_purchase_total)}</span>
+      </div>
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">คือเงินที่จ่ายไปซื้อของเข้าสต๊อกจริงในช่วงนี้ (กระแสเงินสด) ซึ่งอาจไม่เท่ากับยอด "วัตถุดิบ" ด้านบนที่นับเฉพาะของที่ถูกใช้ไปจริง — เช่น ซื้อตุนไว้เยอะแต่ยังใช้ไม่หมด ตัวเลขสองอันนี้จะต่างกันได้ตามปกติ</p>` : ''}
     </div>
   `;
 
@@ -3336,6 +3438,29 @@ async function renderIngredients(detailId) {
   const todayClosed = todayEntry?.is_closed === true;
   const ledgerRows = await getDailyIngredientLedger(ingredientsLedgerDate);
 
+  // ---------- รายการ "ต้องดำเนินการวันนี้" — รวมใกล้หมด + เกินกำหนดนับ ไว้จุดเดียวบนสุด ไม่ต้องเลื่อนหาทั้งตาราง ----------
+  const actionNeededIngredients = allIngredients.filter((ing) => lowStock.has(ing.id) || overdueMap[ing.id]);
+  const actionNeededHtml = actionNeededIngredients.length
+    ? actionNeededIngredients
+        .map((ing) => {
+          const reasons = [];
+          if (lowStock.has(ing.id)) reasons.push('ใกล้หมด');
+          if (overdueMap[ing.id]) reasons.push(overdueMap[ing.id]);
+          return `
+      <div class="row-item" style="flex-wrap:wrap;gap:8px;">
+        <span class="label" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}
+          <span style="font-size:11px;color:var(--ember-deep);">${escapeHtml(reasons.join(' · '))}</span>
+        </span>
+        <span style="display:flex;gap:6px;flex-shrink:0;">
+          <button type="button" class="btn-quick btn-quick-purchase" data-quick-purchase="${ing.id}">ซื้อ</button>
+          <button type="button" class="btn-quick btn-quick-count" data-quick-count="${ing.id}">นับ</button>
+        </span>
+      </div>`;
+        })
+        .join('')
+    : `<div class="empty-state"><p>วันนี้ไม่มีรายการต้องจัดการ ของครบ นับครบแล้ว</p></div>`;
+
   // ---------- แผงรายละเอียด (คำนวณก่อน เพื่อแทรกเป็นแถวขยายใต้แถวที่เลือกในตารางเดียวกัน) ----------
   const selectedIng = ingredientsDetailId ? allIngredients.find((i) => i.id === ingredientsDetailId) : null;
   let detailPanelHtml = '';
@@ -3382,6 +3507,20 @@ async function renderIngredients(detailId) {
         </div>
       </div>
 
+      <div class="field" style="margin-top:10px;">
+        <label for="detail-frequency">ความถี่การนับสต็อก</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <select id="detail-frequency" style="flex:1;min-width:110px;">
+            <option value="daily" ${selectedIng.count_frequency === 'daily' ? 'selected' : ''}>นับทุกวัน</option>
+            <option value="weekly" ${selectedIng.count_frequency === 'weekly' ? 'selected' : ''}>นับทุกสัปดาห์</option>
+          </select>
+          <select id="detail-weekly-day" style="flex:1;min-width:110px;${selectedIng.count_frequency === 'weekly' ? '' : 'display:none;'}">
+            ${WEEKDAY_NAMES_TH.map((name, idx) => `<option value="${idx}" ${selectedIng.weekly_count_day === idx ? 'selected' : ''}>ทุกวัน${name}</option>`).join('')}
+          </select>
+          <button class="btn btn-ghost btn-small" id="btn-save-frequency">บันทึก</button>
+        </div>
+      </div>
+
       <button class="btn-edit-text" style="margin-top:16px;" id="btn-toggle-ing-history">${ingredientsHistoryOpen ? 'ซ่อนประวัติซื้อ ▲' : 'ดูประวัติซื้อ ▾'}</button>
 
       <div id="ing-history-panel" style="${ingredientsHistoryOpen ? '' : 'display:none;'}margin-top:10px;">
@@ -3407,6 +3546,19 @@ async function renderIngredients(detailId) {
 
   // (หมายเหตุ: ตารางรายการวัตถุดิบถูกรวมเข้ากับ "สรุปรายวัน" ด้านล่างแล้ว ไม่ต้องสร้างตารางแยกอีกชุด)
 
+  // จำนวนรายการ + จำนวนที่ "ต้องดำเนินการ" (ใกล้หมด/เกินกำหนดนับ) ต่อหมวดหมู่ — โชว์เป็น badge บนแท็บหมวดหมู่
+  // เพื่อให้เห็นตั้งแต่ยังไม่ได้กดเข้าไปดูว่าหมวดไหนมีอะไรต้องจัดการบ้าง ไม่ต้องเปิดทุกแท็บไล่เช็คเอง
+  const categoryCounts = {};
+  const categoryFlaggedCounts = {};
+  for (const ing of allIngredients) {
+    const key = ing.category || 'ไม่ระบุหมวดหมู่';
+    categoryCounts[key] = (categoryCounts[key] || 0) + 1;
+    if (lowStock.has(ing.id) || overdueMap[ing.id]) {
+      categoryFlaggedCounts[key] = (categoryFlaggedCounts[key] || 0) + 1;
+    }
+  }
+  const totalFlaggedCount = Object.values(categoryFlaggedCounts).reduce((a, b) => a + b, 0);
+
   const categoryTabsHtml = `
     <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:2px;">
       ${categoryTabs
@@ -3415,9 +3567,14 @@ async function renderIngredients(detailId) {
           const color = isSpecial ? { bg: 'var(--paper-deep)', text: 'var(--ink-soft)' } : getCategoryColor(c);
           const active = c === ingredientsActiveCategory;
           const style = active
-            ? `background:${color.text};color:var(--white);border:1.5px solid ${color.text};white-space:nowrap;`
-            : `background:${color.bg};color:${color.text};border:1.5px solid transparent;white-space:nowrap;`;
-          return `<button class="btn btn-small" data-select-ing-category="${escapeHtml(c)}" style="${style}">${escapeHtml(c)}</button>`;
+            ? `background:${color.text};color:var(--white);border:1.5px solid ${color.text};white-space:nowrap;position:relative;`
+            : `background:${color.bg};color:${color.text};border:1.5px solid transparent;white-space:nowrap;position:relative;`;
+          const count = c === 'ทั้งหมด' ? allIngredients.length : categoryCounts[c] || 0;
+          const flagged = c === 'ทั้งหมด' ? totalFlaggedCount : categoryFlaggedCounts[c] || 0;
+          const badge = flagged > 0
+            ? `<span style="position:absolute;top:-6px;right:-6px;background:var(--ember-deep);color:var(--white);border-radius:9px;min-width:18px;height:18px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;">${flagged}</span>`
+            : '';
+          return `<button class="btn btn-small" data-select-ing-category="${escapeHtml(c)}" style="${style}">${escapeHtml(c)} <span style="opacity:.7;">(${count})</span>${badge}</button>`;
         })
         .join('')}
     </div>`;
@@ -3432,22 +3589,23 @@ async function renderIngredients(detailId) {
 
   const filteredLedgerRows = ledgerRows.filter((r) => matchesActiveCategory(r.ingredient.category));
 
-  const ledgerRowsHtml = filteredLedgerRows.length
-    ? filteredLedgerRows
-        .map((r) => {
-          const ing = r.ingredient;
-          const closingDisplay = r.is_counted ? `${r.closing_count} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">ยังไม่นับ</span>`;
-          const usedDisplay = r.is_counted ? `${r.used_qty} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">รอปิดร้าน</span>`;
-          const valueDisplay = r.is_counted ? formatMoney(r.used_value) : `<span style="color:var(--ink-soft);">—</span>`;
+  const buildIngredientRowHtml = (r) => {
+    const ing = r.ingredient;
+    const closingDisplay = r.is_counted ? `${r.closing_count} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">ยังไม่นับ</span>`;
+    const usedDisplay = r.is_counted ? `${r.used_qty} ${escapeHtml(ing.unit)}` : `<span style="color:var(--ink-soft);">รอปิดร้าน</span>`;
+    const valueDisplay = r.is_counted ? formatMoney(r.used_value) : `<span style="color:var(--ink-soft);">—</span>`;
+    const openingHint = !r.is_counted && r.days_since_last_count > 0
+      ? ` <span style="color:var(--ink-soft);font-size:10px;">(สะสม ${r.days_since_last_count + 1} วัน)</span>`
+      : '';
 
-          const stamps = [];
-          if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
-          if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
-          if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
+    const stamps = [];
+    if (lowStock.has(ing.id)) stamps.push(`<span class="stamp warn">ใกล้หมด</span>`);
+    if (overdueMap[ing.id]) stamps.push(`<span class="stamp warn">${escapeHtml(overdueMap[ing.id])}</span>`);
+    if (stamps.length === 0) stamps.push(`<span class="stamp ok">ปกติ</span>`);
 
-          const selected = ingredientsDetailId === ing.id;
+    const selected = ingredientsDetailId === ing.id;
 
-          const mainRow = `
+    const mainRow = `
         <tr data-ingredient-row="${ing.id}" style="cursor:pointer;${selected ? 'background:var(--paper-deep);' : ''}">
           <td style="padding:8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap;">
             <div style="display:flex;align-items:center;gap:6px;">
@@ -3457,7 +3615,7 @@ async function renderIngredients(detailId) {
             </div>
           </td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(ing.current_avg_cost)}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.opening_stock} ${escapeHtml(ing.unit)}${openingHint}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.purchased_qty} ${escapeHtml(ing.unit)}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${closingDisplay}</td>
           <td style="padding:8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${usedDisplay}</td>
@@ -3465,14 +3623,35 @@ async function renderIngredients(detailId) {
           <td style="padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;"><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">${stamps.join('')}</div></td>
         </tr>`;
 
-          const detailRow = selected
-            ? `<tr><td colspan="8" style="padding:0;border-bottom:1px solid var(--line);background:var(--paper-deep);">${detailPanelHtml}</td></tr>`
-            : '';
+    const detailRow = selected
+      ? `<tr><td colspan="8" style="padding:0;border-bottom:1px solid var(--line);background:var(--paper-deep);">${detailPanelHtml}</td></tr>`
+      : '';
 
-          return mainRow + detailRow;
-        })
-        .join('')
-    : `<tr><td colspan="8" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบให้แสดง</p></div></td></tr>`;
+    return mainRow + detailRow;
+  };
+
+  let ledgerRowsHtml;
+  if (ingredientsActiveCategory === 'ทั้งหมด' && filteredLedgerRows.length) {
+    // จัดกลุ่มตามหมวดหมู่ พร้อมหัวข้อคั่นแต่ละกลุ่ม กันเลื่อนดูยาวๆ แล้วตกหล่นว่ามีหมวดไหนบ้าง
+    const groups = {};
+    for (const r of filteredLedgerRows) {
+      const key = r.ingredient.category || 'ไม่ระบุหมวดหมู่';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    }
+    const orderedKeys = [...categoriesInUse, ...(hasUncategorized ? ['ไม่ระบุหมวดหมู่'] : [])].filter((k) => groups[k]);
+    ledgerRowsHtml = orderedKeys
+      .map((key) => {
+        const color = key === 'ไม่ระบุหมวดหมู่' ? { bg: 'var(--paper-deep)', text: 'var(--ink-soft)' } : getCategoryColor(key);
+        const headerRow = `<tr><td colspan="8" style="padding:10px 8px 6px;background:${color.bg};font-weight:700;font-size:12px;color:${color.text};">${escapeHtml(key)} (${groups[key].length})</td></tr>`;
+        return headerRow + groups[key].map(buildIngredientRowHtml).join('');
+      })
+      .join('');
+  } else {
+    ledgerRowsHtml = filteredLedgerRows.length
+      ? filteredLedgerRows.map(buildIngredientRowHtml).join('')
+      : `<tr><td colspan="8" style="padding:16px 8px;"><div class="empty-state"><p>ยังไม่มีวัตถุดิบให้แสดง</p></div></td></tr>`;
+  }
 
   const ledgerTotalValue = filteredLedgerRows.reduce((sum, r) => sum + (r.used_value || 0), 0);
 
@@ -3566,7 +3745,18 @@ async function renderIngredients(detailId) {
           </select>
         </div>
       </div>
+      <div class="field" id="ing-weekly-day-field" style="display:none;">
+        <label for="ing-weekly-day">นับทุกวัน (กำหนดวันตายตัวรายสัปดาห์)</label>
+        <select id="ing-weekly-day">
+          ${WEEKDAY_NAMES_TH.map((name, idx) => `<option value="${idx}">${name}</option>`).join('')}
+        </select>
+      </div>
       <button class="btn btn-ghost" id="btn-add-ingredient">+ เพิ่มวัตถุดิบ</button>
+    </div>
+
+    <div class="card">
+      <h2>ต้องดำเนินการวันนี้${actionNeededIngredients.length ? ` (${actionNeededIngredients.length})` : ''}</h2>
+      <div class="row-list">${actionNeededHtml}</div>
     </div>
 
     <div class="alert-row">
@@ -3644,18 +3834,27 @@ async function renderIngredients(detailId) {
     ${quickModalHtml}
   `;
 
+  const toggleWeeklyDayField = () => {
+    document.getElementById('ing-weekly-day-field').style.display =
+      document.getElementById('ing-frequency').value === 'weekly' ? '' : 'none';
+  };
+  toggleWeeklyDayField();
+  document.getElementById('ing-frequency').addEventListener('change', toggleWeeklyDayField);
+
   document.getElementById('btn-add-ingredient').addEventListener('click', async () => {
     const name = document.getElementById('ing-name').value.trim();
     const unit = document.getElementById('ing-unit').value.trim();
     const category = document.getElementById('ing-category').value.trim() || null;
     if (!name || !unit) { showToast('กรุณาใส่ชื่อและหน่วยนับ'); return; }
     try {
+      const count_frequency = document.getElementById('ing-frequency').value;
       await createIngredient({
         name,
         unit,
         category,
         reorder_point: Number(document.getElementById('ing-reorder').value) || 0,
-        count_frequency: document.getElementById('ing-frequency').value,
+        count_frequency,
+        weekly_count_day: count_frequency === 'weekly' ? Number(document.getElementById('ing-weekly-day').value) : null,
       });
       showToast('เพิ่มวัตถุดิบสำเร็จ');
       ingredientsActiveCategory = category ? category : 'ไม่ระบุหมวดหมู่';
@@ -3756,6 +3955,23 @@ async function renderIngredients(detailId) {
       const category = document.getElementById('detail-category').value.trim() || null;
       await updateIngredient(ingredientsDetailId, { category });
       showToast('บันทึกหมวดหมู่แล้ว');
+      renderIngredients(ingredientsDetailId);
+    });
+  }
+
+  const detailFrequencySelect = document.getElementById('detail-frequency');
+  if (detailFrequencySelect) {
+    detailFrequencySelect.addEventListener('change', () => {
+      document.getElementById('detail-weekly-day').style.display = detailFrequencySelect.value === 'weekly' ? '' : 'none';
+    });
+  }
+  const saveFrequencyBtn = document.getElementById('btn-save-frequency');
+  if (saveFrequencyBtn) {
+    saveFrequencyBtn.addEventListener('click', async () => {
+      const count_frequency = document.getElementById('detail-frequency').value;
+      const weekly_count_day = count_frequency === 'weekly' ? Number(document.getElementById('detail-weekly-day').value) : null;
+      await updateIngredient(ingredientsDetailId, { count_frequency, weekly_count_day });
+      showToast('บันทึกความถี่การนับแล้ว');
       renderIngredients(ingredientsDetailId);
     });
   }

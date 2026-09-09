@@ -88,10 +88,10 @@
     background: var(--white);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 16px;
+    padding: 12px;
+    margin-bottom: 10px;
   }
-  .card h2 { font-size: 17px; margin-bottom: 16px; padding-bottom: 10px; position: relative; }
+  .card h2 { font-size: 17px; margin-bottom: 10px; padding-bottom: 6px; position: relative; }
   .card h2::after {
     content: ""; position: absolute; left: 0; bottom: 0; width: 28px; height: 2px; background: var(--brass);
   }
@@ -100,7 +100,7 @@
   .row-list { display: flex; flex-direction: column; }
   .row-item {
     display: flex; justify-content: space-between; align-items: baseline;
-    padding: 10px 0; border-bottom: 1px solid var(--line);
+    padding: 8px 0; border-bottom: 1px solid var(--line);
   }
   .row-item:last-child { border-bottom: none; }
   .row-item .label { color: var(--ink-soft); font-size: 14px; }
@@ -113,7 +113,7 @@
 
   /* ---------------- ฟอร์ม: ช่องกรอกแบบเส้นใต้ (สมุดบัญชี) ---------------- */
   label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }
-  .field { margin-bottom: 18px; }
+  .field { margin-bottom: 12px; }
   input[type="text"], input[type="number"], input[type="date"], select {
     width: 100%; padding: 9px 2px;
     border: none; border-bottom: 1.5px solid var(--line); border-radius: 0;
@@ -187,8 +187,8 @@
   .btn-quick-count { background: var(--ember-bg); color: var(--brass); }
   .btn-quick-count:active { background: var(--brass); color: var(--white); }
   .btn-quick.icon-only {
-    width: 24px; height: 24px; border-radius: 50%;
-    padding: 0; font-size: 12px;
+    width: 22px; height: 22px; border-radius: 50%;
+    padding: 0; font-size: 11px;
   }
 
   /* ---------------- ป๊อปอัพกรอกข้อมูลด่วน (ซื้อเข้า / นับสต๊อก) ---------------- */
@@ -262,11 +262,12 @@
   .ledger-table-wrap thead th:first-child { z-index: 3; background: var(--paper-deep); }
   .ledger-table-wrap td:first-child,
   .ledger-table-wrap th:first-child {
-    max-width: 116px;
+    max-width: 148px;
   }
   .ledger-name-text {
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px;
   }
   .ledger-table-wrap tr[data-ingredient-row] td:first-child { background: var(--paper); }
   .ledger-table-wrap tr.row-selected td:first-child,

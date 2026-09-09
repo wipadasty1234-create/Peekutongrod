@@ -1969,6 +1969,32 @@ async function getIngredientUsageReport(ingredient_id, fromDate, toDate) {
   return { ingredient_id, from: fromDate, to: toDate, total_used_qty, total_used_value, records };
 }
 
+/** สรุปการใช้วัตถุดิบ "ทุกรายการที่ active" ในช่วงวันที่ระบุ — ใช้กับตาราง "แนวโน้มการใช้" ที่ไม่ต้องเลือกวัตถุดิบทีละตัว
+ *  เรียงจากมูลค่าที่ใช้ไปมากสุดไปน้อยสุด เพื่อให้เห็นตัวที่กินต้นทุนมากที่สุดก่อน รายการที่ไม่มีการนับเลยในช่วงนี้จะโชว์ 0 (ช่วยสังเกตว่าลืมนับ) */
+async function getAllIngredientsUsageReport(fromDate, toDate) {
+  const ingredients = await listIngredients({ activeOnly: true });
+  const counts = await db.ingredient_stock_counts.where('count_date').between(fromDate, toDate, true, true).toArray();
+
+  const totalsById = {};
+  for (const c of counts) {
+    if (!totalsById[c.ingredient_id]) totalsById[c.ingredient_id] = { total_used_qty: 0, total_used_value: 0, counted_days: 0 };
+    totalsById[c.ingredient_id].total_used_qty += c.used_qty;
+    totalsById[c.ingredient_id].total_used_value += c.used_value;
+    totalsById[c.ingredient_id].counted_days += 1;
+  }
+
+  const rows = ingredients.map((ing) => ({
+    ingredient: ing,
+    ...(totalsById[ing.id] || { total_used_qty: 0, total_used_value: 0, counted_days: 0 }),
+  }));
+  rows.sort((a, b) => b.total_used_value - a.total_used_value);
+
+  const grand_total_value = rows.reduce((sum, r) => sum + r.total_used_value, 0);
+
+  return { from: fromDate, to: toDate, rows, grand_total_value };
+}
+
+
 /** สรุปวัตถุดิบทั้งหมด (ทุกรายการที่ active) ของ "วันที่เดียว" ที่ระบุ — ยอดยกมา/ซื้อเข้า/นับได้ปิดร้าน/
  *  ใช้ไปจริง/มูลค่าที่ใช้ไป ใช้ได้ทั้งดูตอนเช้าเพื่อวางแผน (ถ้ายังไม่ปิดร้าน จะโชว์ยอดคงเหลือ+ซื้อเข้าล่าสุด
  *  ให้แทน โดยยังไม่มีเลข "ใช้ไปจริง" เพราะต้องรอนับปิดร้านก่อน) และดูสรุปย้อนหลังหลังปิดร้านแล้ว
@@ -2554,7 +2580,7 @@ async function renderEntry(dateStr) {
     const qty = existingSale?.quantity ?? 0;
     return sum + price * qty;
   }, 0);
-  const grandTotal = itemsSubtotal + (entry?.takeaway_total ?? 0);
+  const grandTotal = itemsSubtotal;
 
   $content.innerHTML = `
     <h1 class="section-title">บันทึกยอดวันนี้</h1>
@@ -2573,14 +2599,15 @@ async function renderEntry(dateStr) {
       <div class="card">
         <h2>ยอดขาย (ระบุจำนวนนับในแต่ละรายการ)</h2>
         <p style="font-size:13px;color:var(--ink-soft);margin-top:-10px;">แก้ราคาช่องกลางได้ถ้าราคาจริงเปลี่ยนไปแล้วแต่ยังไม่ได้แก้ในระบบ (ต้องระบุเหตุผลในช่องโน้ตด้านล่าง)</p>
+        <div class="addon-row" style="border-bottom:none;padding-bottom:2px;">
+          <span class="name"></span>
+          <span style="width:72px;text-align:center;font-size:11px;font-weight:700;color:var(--ink-soft);">ราคา (บาท)</span>
+          <span style="width:64px;text-align:center;font-size:11px;font-weight:700;color:var(--ink-soft);">จำนวน</span>
+        </div>
         ${categorySectionsHtml || `<p style="color:var(--ink-soft); font-size:14px;">ยังไม่มีเมนู — เพิ่มได้ที่ "ตั้งค่าเมนู"</p>`}
         <div class="addon-row">
-          <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(จำนวนบิล)</span></span>
+          <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(จำนวนบิล — สั่งจานหลักตามปกติ ช่องนี้ใช้แค่คิดค่าถุงอัตโนมัติ)</span></span>
           <input type="number" id="f-takeaway-count" min="0" inputmode="numeric" value="${entry?.takeaway_count ?? 0}" />
-        </div>
-        <div class="addon-row">
-          <span class="name">กลับบ้าน <span style="color:var(--ink-soft)">(ยอดขายรวม บาท)</span></span>
-          <input type="number" id="f-takeaway-total" min="0" inputmode="decimal" value="${entry?.takeaway_total ?? 0}" />
         </div>
         <div class="row-item" style="border-bottom:none;">
           <span class="label" style="font-weight:700;">ยอดขายรวมตามระบบ</span>
@@ -2620,9 +2647,8 @@ async function renderEntry(dateStr) {
       const priceInput = document.querySelector(`[data-price-for="${qtyInput.dataset.menuItemId}"]`);
       itemsSub += (Number(qtyInput.value) || 0) * (Number(priceInput?.value) || 0);
     });
-    const takeawayTotal = Number(document.getElementById('f-takeaway-total')?.value) || 0;
     const grandTotalEl = document.getElementById('f-grand-total');
-    if (grandTotalEl) grandTotalEl.textContent = formatMoney(itemsSub + takeawayTotal);
+    if (grandTotalEl) grandTotalEl.textContent = formatMoney(itemsSub);
   }
   document.getElementById('sales-section')?.addEventListener('input', recalcGrandTotal);
 
@@ -2649,7 +2675,7 @@ async function renderEntry(dateStr) {
       await upsertDailyEntry({
         entry_date: targetDate,
         is_closed: closed,
-        takeaway_total: closed ? 0 : Number(document.getElementById('f-takeaway-total').value) || 0,
+        takeaway_total: 0, // ยอดขายกลับบ้านย้ายไปนับรวมในเมนูจานหลักตามปกติแล้ว (ตาม Option A) — เก็บ 0 ไว้เพื่อความเข้ากันได้กับข้อมูลเก่า
         takeaway_count: closed ? 0 : Number(document.getElementById('f-takeaway-count').value) || 0,
         actual_revenue,
         note,
@@ -2726,19 +2752,26 @@ async function renderMenuSettings() {
           const rowsHtml = catItems
             .map(
               (item) => `
-            <div class="row-item" style="align-items:center;flex-wrap:wrap;gap:6px;">
-              <span class="label">${escapeHtml(item.name)}</span>
-              <span class="value" style="display:flex; align-items:center; gap:6px;flex-wrap:wrap;">
-                ${cat.name === 'บุฟเฟต์' ? `
-                <select class="edit-role-select" data-role-item-id="${item.id}" title="ใช้ตอนสรุปจำนวนหัวลูกค้าในแดชบอร์ด/รายงาน" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);">
-                  <option value="adult" ${item.buffet_role === 'adult' ? 'selected' : ''}>นับหัวผู้ใหญ่</option>
-                  <option value="child" ${item.buffet_role === 'child' ? 'selected' : ''}>นับหัวเด็ก</option>
-                  <option value="" ${!item.buffet_role ? 'selected' : ''}>ไม่นับหัว</option>
-                </select>` : ''}
-                <input type="number" min="0" step="any" class="edit-price-input" data-item-id="${item.id}" data-current-price="${item.default_price}" value="${item.default_price}" style="width:76px;" />
-                <button class="btn-ghost" data-save-price="${item.id}" style="padding:4px 8px; font-size:12px;">บันทึกราคา</button>
+            <div class="row-item" style="flex-direction:column;align-items:stretch;gap:10px;padding:12px 0;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span class="label" style="font-weight:700;color:var(--ink);">${escapeHtml(item.name)}</span>
                 <button class="btn-danger-text" data-remove-item="${item.id}">ลบ</button>
-              </span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                ${cat.name === 'บุฟเฟต์' ? `
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);">
+                  นับหัว
+                  <select class="edit-role-select" data-role-item-id="${item.id}" title="ใช้ตอนสรุปจำนวนหัวลูกค้าในแดชบอร์ด/รายงาน" style="font-size:12px;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);">
+                    <option value="adult" ${item.buffet_role === 'adult' ? 'selected' : ''}>ผู้ใหญ่</option>
+                    <option value="child" ${item.buffet_role === 'child' ? 'selected' : ''}>เด็ก</option>
+                    <option value="" ${!item.buffet_role ? 'selected' : ''}>ไม่นับ</option>
+                  </select>
+                </label>` : '<span></span>'}
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input type="number" min="0" step="any" class="edit-price-input" data-item-id="${item.id}" data-current-price="${item.default_price}" value="${item.default_price}" style="width:80px;" />
+                  <button class="btn-ghost" data-save-price="${item.id}" style="padding:6px 10px; font-size:12px;">บันทึกราคา</button>
+                </div>
+              </div>
             </div>`
             )
             .join('');
@@ -3460,6 +3493,7 @@ let ingredientsSummaryTab = 'daily'; // 'daily' = สรุปวัตถุด
 let ingredientsShowSecondaryCols = false; // แสดงคอลัมน์รายละเอียด (ต้นทุน/ยอดยกมา/ซื้อเข้า/มูลค่า) บนจอแคบ
 let ingredientsHistoryOpen = false; // แผงประวัติซื้อ พับ/กาง
 let quickModal = null; // { type: 'purchase' | 'count', ingredientId } — ป๊อปอัพกรอกข้อมูลด่วนจากตาราง
+let ingredientsStatusFilter = null; // null | 'low_stock' | 'uncounted' — กรองตารางด้านล่างตามสถานะที่ต้องจัดการ
 
 async function renderIngredients(detailId) {
   if (detailId !== undefined) ingredientsDetailId = detailId;
@@ -3486,8 +3520,8 @@ async function renderIngredients(detailId) {
   const overdueMap = Object.fromEntries(overdueList.map((o) => [o.ingredient.id, o.reason]));
   const ledgerRows = await getDailyIngredientLedger(ingredientsLedgerDate);
 
-  // ---------- สถานะ "ต้องดำเนินการวันนี้" — สรุปเป็นชิปตามหมวดหมู่ (แตะแล้วกระโดดไปตารางของหมวดนั้น) ----------
-  // จำนวนรายการ + จำนวนที่ "ต้องดำเนินการ" (ใกล้หมด/เกินกำหนดนับ) ต่อหมวดหมู่ — ใช้ทั้งกับชิปสรุปด้านบน และ badge บนแท็บหมวดหมู่
+  // ---------- สถานะ "ต้องดำเนินการวันนี้" — 2 ปุ่มตัวกรองสถานะ (ใกล้หมด / ยังไม่ได้นับ) กดแล้วกรองตารางด้านล่างทันที ----------
+  // จำนวนรายการ + จำนวนที่ "ต้องดำเนินการ" (ใกล้หมด/เกินกำหนดนับ) ต่อหมวดหมู่ — ใช้ทั้งกับปุ่มกรองด้านบน และ badge บนแท็บหมวดหมู่
   const categoryCounts = {};
   const categoryFlaggedCounts = {};
   const categoryLowStockCounts = {};
@@ -3502,20 +3536,24 @@ async function renderIngredients(detailId) {
     }
   }
   const totalFlaggedCount = Object.values(categoryFlaggedCounts).reduce((a, b) => a + b, 0);
+  const totalLowStockCount = Object.values(categoryLowStockCounts).reduce((a, b) => a + b, 0);
+  const totalOverdueCount = Object.values(categoryOverdueCounts).reduce((a, b) => a + b, 0);
+  if (ingredientsStatusFilter === 'low_stock' && totalLowStockCount === 0) ingredientsStatusFilter = null;
+  if (ingredientsStatusFilter === 'uncounted' && totalOverdueCount === 0) ingredientsStatusFilter = null;
 
-  const flaggedCategoryKeys = Object.keys(categoryFlaggedCounts).sort((a, b) => a.localeCompare(b, 'th'));
-  const actionChipsHtml = flaggedCategoryKeys.length
-    ? flaggedCategoryKeys
-        .map((key) => {
-          const color = key === 'ไม่ระบุหมวดหมู่' ? { bg: 'var(--paper-deep)', text: 'var(--ink-soft)' } : getCategoryColor(key);
-          const lowN = categoryLowStockCounts[key] || 0;
-          const odN = categoryOverdueCounts[key] || 0;
-          const parts = [];
-          if (lowN) parts.push(`🔴 ${lowN}`);
-          if (odN) parts.push(`🟡 ${odN}`);
-          return `<button type="button" class="btn btn-small" data-select-ing-category="${escapeHtml(key)}" data-action-chip="1" style="background:${color.bg};color:${color.text};border:1.5px solid ${color.text};white-space:nowrap;">${escapeHtml(key)} <span style="font-weight:700;">${parts.join(' · ')}</span></button>`;
-        })
-        .join('')
+  const statusPillHtml = (key, emoji, label, count) => {
+    const active = ingredientsStatusFilter === key;
+    const style = active
+      ? 'background:var(--ember-deep);color:var(--white);border:1.5px solid var(--ember-deep);'
+      : 'background:var(--ember-bg);color:var(--ember-deep);border:1.5px solid transparent;';
+    return `<button type="button" class="btn btn-small" data-status-filter="${key}" style="${style}white-space:nowrap;">${emoji} ${label} <span style="font-weight:700;">${count}</span></button>`;
+  };
+  const actionChipsHtml = totalLowStockCount || totalOverdueCount
+    ? [
+        totalLowStockCount ? statusPillHtml('low_stock', '🔴', 'ใกล้หมด', totalLowStockCount) : '',
+        totalOverdueCount ? statusPillHtml('uncounted', '🟡', 'ยังไม่ได้นับ', totalOverdueCount) : '',
+        ingredientsStatusFilter ? `<button type="button" class="btn btn-ghost btn-small" data-status-filter="">ล้างตัวกรอง ✕</button>` : '',
+      ].join('')
     : `<span class="stamp ok">วันนี้ไม่มีรายการต้องจัดการ ของครบ นับครบแล้ว</span>`;
 
   // ---------- แผงรายละเอียด (คำนวณก่อน เพื่อแทรกเป็นแถวขยายใต้แถวที่เลือกในตารางเดียวกัน) ----------
@@ -3611,10 +3649,8 @@ async function renderIngredients(detailId) {
         ${categoryTabs
           .map((c) => {
             const count = c === 'ทั้งหมด' ? allIngredients.length : categoryCounts[c] || 0;
-            const flagged = c === 'ทั้งหมด' ? totalFlaggedCount : categoryFlaggedCounts[c] || 0;
-            const flagLabel = flagged > 0 ? ` — ต้องดู ${flagged}` : '';
             const selected = c === ingredientsActiveCategory ? 'selected' : '';
-            return `<option value="${escapeHtml(c)}" ${selected}>${escapeHtml(c)} (${count})${flagLabel}</option>`;
+            return `<option value="${escapeHtml(c)}" ${selected}>${escapeHtml(c)} (${count})</option>`;
           })
           .join('')}
       </select>
@@ -3628,7 +3664,12 @@ async function renderIngredients(detailId) {
       ? !category
       : category === ingredientsActiveCategory;
 
-  const filteredLedgerRows = ledgerRows.filter((r) => matchesActiveCategory(r.ingredient.category));
+  const filteredLedgerRows = ledgerRows.filter((r) => {
+    if (!matchesActiveCategory(r.ingredient.category)) return false;
+    if (ingredientsStatusFilter === 'low_stock') return lowStock.has(r.ingredient.id);
+    if (ingredientsStatusFilter === 'uncounted') return Boolean(overdueMap[r.ingredient.id]);
+    return true;
+  });
 
   const buildIngredientRowHtml = (r) => {
     const ing = r.ingredient;
@@ -3639,15 +3680,15 @@ async function renderIngredients(detailId) {
       ? ` <span style="color:var(--ink-soft);font-size:10px;">(สะสม ${r.days_since_last_count + 1} วัน)</span>`
       : '';
 
-    // ต้องซื้อ / การนับ — แยกเป็นคนละคอลัมน์ (เดิมซ้อนกันในคอลัมน์ "สถานะ" เดียว) โชว์แค่ไอคอนให้แคบ ชี้เมาส์/แตะดูรายละเอียดจาก title
+    // ต้องซื้อ / การนับ — แยกเป็นคนละคอลัมน์ (เดิมซ้อนกันในคอลัมน์ "สถานะ" เดียว) โชว์แค่ไอคอนให้แคบ ชี้เมาส์/แตะดูรายละเอียดจาก title (ไม่มีพื้นหลังสี ให้ดูโปร่งกว่าเดิม)
     const needBuy = lowStock.has(ing.id);
     const buyCell = needBuy
-      ? `<span class="stamp warn" title="ใกล้หมด — ควรสั่งซื้อ" style="padding:3px 8px;">🔴</span>`
+      ? `<span title="ใกล้หมด — ควรสั่งซื้อ" style="font-size:15px;">🔴</span>`
       : `<span style="color:var(--ink-soft);" title="ปริมาณยังพอใช้">–</span>`;
     const countReason = overdueMap[ing.id];
     const countCell = countReason
-      ? `<span class="stamp warn" title="${escapeHtml(countReason)}" style="padding:3px 8px;">🟡</span>`
-      : `<span class="stamp ok" title="นับตามกำหนดแล้ว" style="padding:3px 8px;">✅</span>`;
+      ? `<span title="${escapeHtml(countReason)}" style="font-size:15px;">🟡</span>`
+      : `<span title="นับตามกำหนดแล้ว" style="font-size:15px;">✅</span>`;
 
     const selected = ingredientsDetailId === ing.id;
 
@@ -3804,11 +3845,7 @@ async function renderIngredients(detailId) {
     <div class="card">
       <h2>ต้องดำเนินการวันนี้${totalFlaggedCount ? ` (${totalFlaggedCount})` : ''}</h2>
       <div style="display:flex;flex-wrap:wrap;gap:8px;">${actionChipsHtml}</div>
-      ${flaggedCategoryKeys.length ? `<p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">🔴 ใกล้หมด · 🟡 ยังไม่ได้นับ — แตะหมวดหมู่เพื่อดูรายการในตารางด้านล่าง</p>` : ''}
-    </div>
-
-    <div style="margin-bottom:16px;">
-      <button class="btn btn-ghost btn-small" id="btn-export-lots">ส่งออกประวัติราคาซื้อทุกล็อต (CSV)</button>
+      ${totalLowStockCount || totalOverdueCount ? `<p style="font-size:11px;color:var(--ink-soft);margin:8px 0 0;">แตะปุ่มด้านบนเพื่อกรองตารางด้านล่างให้เหลือเฉพาะรายการที่ต้องจัดการ</p>` : ''}
     </div>
 
     <div class="card">
@@ -3816,6 +3853,9 @@ async function renderIngredients(detailId) {
       <div class="seg-tabs">
         <button class="seg-tab ${ingredientsSummaryTab === 'daily' ? 'active' : ''}" data-summary-tab="daily">สรุปรายวัน</button>
         <button class="seg-tab ${ingredientsSummaryTab === 'trend' ? 'active' : ''}" data-summary-tab="trend">แนวโน้มการใช้ (รายตัว)</button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin:8px 0 4px;">
+        <button class="btn btn-ghost btn-small" id="btn-export-lots">ส่งออกประวัติราคาซื้อทุกล็อต (CSV)</button>
       </div>
 
       <div id="summary-panel-daily" style="${ingredientsSummaryTab === 'daily' ? '' : 'display:none;'}">
@@ -3855,13 +3895,7 @@ async function renderIngredients(detailId) {
       </div>
 
       <div id="summary-panel-trend" style="${ingredientsSummaryTab === 'trend' ? '' : 'display:none;'}">
-        <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">ดูว่าวัตถุดิบแต่ละอย่างถูกใช้ไปมากน้อยแค่ไหนในแต่ละวัน เพื่อประเมินต้นทุนอาหาร</p>
-        <div class="field">
-          <label for="usage-ingredient">วัตถุดิบ</label>
-          <select id="usage-ingredient">
-            ${allIngredients.map((ing) => `<option value="${ing.id}">${escapeHtml(ing.name)}</option>`).join('')}
-          </select>
-        </div>
+        <p style="font-size:13px;color:var(--ink-soft);margin-top:-6px;">เลือกช่วงวันที่ แล้วดูว่าวัตถุดิบแต่ละอย่างถูกใช้ไปมากน้อยแค่ไหนรวมกันทั้งช่วง (เรียงจากมูลค่าที่ใช้ไปมากสุดก่อน)</p>
         <div class="field-grid">
           <div class="field">
             <label for="usage-from">จากวันที่</label>
@@ -3937,42 +3971,44 @@ async function renderIngredients(detailId) {
   });
 
   document.getElementById('btn-view-usage')?.addEventListener('click', async () => {
-    const ingredientId = document.getElementById('usage-ingredient').value;
     const from = document.getElementById('usage-from').value;
     const to = document.getElementById('usage-to').value;
-    const ing = ingredients.find((i) => i.id === ingredientId);
-    if (!ing) return;
+    if (!from || !to) return;
 
-    const report = await getIngredientUsageReport(ingredientId, from, to);
-    const rowsHtml = report.records.length
-      ? report.records
-          .map(
-            (r) => `
+    const report = await getAllIngredientsUsageReport(from, to);
+    const rowsHtml = report.rows.length
+      ? report.rows
+          .map((r) => {
+            const ing = r.ingredient;
+            const noDataHint = r.counted_days === 0 ? ` <span style="color:var(--ink-soft);font-size:10px;">(ไม่มีการนับในช่วงนี้)</span>` : '';
+            return `
         <tr>
-          <td style="padding:7px 6px;border-bottom:1px solid var(--line);">${r.count_date}</td>
-          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${r.used_qty} ${escapeHtml(ing.unit)}</td>
-          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;">${formatMoney(r.used_value)}</td>
-        </tr>`
-          )
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);white-space:nowrap;">
+            <div style="display:flex;align-items:center;gap:4px;">${categoryDotHtml(ing.category)}${escapeHtml(ing.name)}</div>
+          </td>
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${r.total_used_qty} ${escapeHtml(ing.unit)}${noDataHint}</td>
+          <td style="padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${formatMoney(r.total_used_value)}</td>
+        </tr>`;
+          })
           .join('')
-      : `<tr><td colspan="3" style="padding:10px 6px;color:var(--ink-soft);">ไม่มีข้อมูลการนับสต็อกในช่วงนี้</td></tr>`;
+      : `<tr><td colspan="3" style="padding:10px 6px;color:var(--ink-soft);">ยังไม่มีวัตถุดิบให้แสดง</td></tr>`;
 
     document.getElementById('usage-result').innerHTML = `
-      <div style="overflow-x:auto;">
+      <div class="ledger-table-wrap" style="max-height:50vh;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
             <tr style="text-align:left;color:var(--ink-soft);font-size:12px;">
-              <th style="padding:6px;">วันที่นับ</th>
-              <th style="padding:6px;text-align:right;">ใช้ไป</th>
-              <th style="padding:6px;text-align:right;">มูลค่า</th>
+              <th style="padding:6px;">วัตถุดิบ</th>
+              <th style="padding:6px;text-align:right;">ใช้ไปรวม</th>
+              <th style="padding:6px;text-align:right;">มูลค่ารวม</th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
       <div class="row-item" style="border-bottom:none;margin-top:4px;">
-        <span class="label" style="font-weight:700;">รวมทั้งช่วง</span>
-        <span class="value">${report.total_used_qty} ${escapeHtml(ing.unit)} (${formatMoney(report.total_used_value)})</span>
+        <span class="label" style="font-weight:700;">รวมมูลค่าทั้งช่วง</span>
+        <span class="value">${formatMoney(report.grand_total_value)}</span>
       </div>
     `;
   });
@@ -3984,14 +4020,12 @@ async function renderIngredients(detailId) {
     });
   });
 
-  document.querySelectorAll('[data-select-ing-category]').forEach((btn) => {
+  document.querySelectorAll('[data-status-filter]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      ingredientsActiveCategory = btn.dataset.selectIngCategory;
-      const isActionChip = btn.dataset.actionChip === '1';
+      const val = btn.dataset.statusFilter;
+      ingredientsStatusFilter = val === '' ? null : ingredientsStatusFilter === val ? null : val;
       await renderIngredients(ingredientsDetailId);
-      if (isActionChip) {
-        document.getElementById('ledger-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      document.getElementById('ledger-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 
@@ -4164,6 +4198,34 @@ async function navigate(viewName) {
 $nav.querySelectorAll('button').forEach((btn) => {
   btn.addEventListener('click', () => navigate(btn.dataset.view));
 });
+
+// ------------------------------------------------------------
+// ช่องตัวเลขทั้งแอป: ค่า default 0 ให้เคลียร์อัตโนมัติตอนแตะเข้าไปกรอก ไม่ต้องลบเอง
+// ถ้าเคลียร์ไปแล้วแต่ออกจากช่องโดยไม่ได้พิมพ์อะไรเลย ค่อยใส่ 0 กลับให้ (กันช่องดูว่างเปล่าเฉยๆ)
+// ต้อง "จำ" ว่าช่องไหนเราเป็นคนเคลียร์ให้ (ผ่าน data-attr) เพราะบางช่อง เช่น "รายรับจริง" ปล่อยว่างไว้ตั้งแต่ต้น
+// มีความหมายพิเศษ (ยังไม่ได้นับ) ต่างจาก 0 (นับแล้วได้ศูนย์) ห้ามไปเติม 0 ให้ช่องแบบนั้นเด็ดขาด
+// ใช้ capture:true เพราะ focus/blur ไม่ bubble ขึ้นมาปกติ — ผูกที่ document ครั้งเดียว ใช้ได้ทุกหน้าที่ re-render เนื้อหาใหม่
+// ------------------------------------------------------------
+document.addEventListener(
+  'focus',
+  (e) => {
+    if (e.target.matches?.('input[type="number"]') && e.target.value === '0') {
+      e.target.value = '';
+      e.target.dataset.autoClearedZero = '1';
+    }
+  },
+  true
+);
+document.addEventListener(
+  'blur',
+  (e) => {
+    if (e.target.matches?.('input[type="number"]') && e.target.dataset.autoClearedZero === '1') {
+      if (e.target.value.trim() === '') e.target.value = '0';
+      delete e.target.dataset.autoClearedZero;
+    }
+  },
+  true
+);
 
 // ------------------------------------------------------------
 // Service worker registration
